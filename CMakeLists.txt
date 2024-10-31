@@ -42,6 +42,7 @@ add_executable(pico_30_10_2024
     libs/bme688/bme688.cpp
     libs/hm3301/hm3301.cpp
     libs/pas_co2/pas_co2.cpp
+    libs/adc/adc.cpp
 )
 
 pico_set_program_name(pico_30_10_2024 "pico_30_10_2024")
@@ -57,6 +58,7 @@ pico_enable_stdio_usb(pico_30_10_2024 1)
 # Add the standard library to the build
 target_link_libraries(pico_30_10_2024
     pico_stdlib
+    hardware_adc
     hardware_spi
     hardware_i2c
     hardware_dma
@@ -76,6 +78,8 @@ target_include_directories(pico_30_10_2024 PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/libs/bme688
     ${CMAKE_CURRENT_LIST_DIR}/libs/bme688/api
     ${CMAKE_CURRENT_LIST_DIR}/libs/hm3301
+    ${CMAKE_CURRENT_LIST_DIR}/libs/pas_co2
+    ${CMAKE_CURRENT_LIST_DIR}/libs/adc
     ${CMAKE_CURRENT_LIST_DIR}/.. # for our common lwipopts or any other standard includes, if required
 )
 

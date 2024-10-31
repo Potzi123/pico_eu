@@ -15,6 +15,7 @@
 #include "libs/hm3301/hm3301.h"
 #include "libs/bme688/bme688.h"
 #include "libs/pas_co2/pas_co2.h"
+#include "libs/adc/adc.h"
 
 
 // I2C configuration and sensor addresses
@@ -24,6 +25,8 @@
 #define HM3301_ADDRESS 0x40
 #define BME688_ADDRESS 0x76
 #define PAS_CO2_ADDRESS 0x28
+
+#define ADC 26
 
 void i2c_init() {
     i2c_init(I2C_PORT, 400000);  // Initialize I2C at 400kHz
@@ -43,6 +46,12 @@ int main() {
 
     i2c_init();
     printf("I2C initialized\n");
+
+
+    myADC batteryADC(ADC);
+    batteryADC.init();
+    printf("ADC initialized\n");
+
 
     // Initialize the HM3301 sensor
     HM3301 hm3301_sensor(I2C_PORT, HM3301_ADDRESS, I2C_SDA, I2C_SCL);
@@ -72,6 +81,12 @@ int main() {
         uint16_t pm1_0, pm2_5, pm10;
         float temperature, humidity, pressure, gas_resistance;
 
+
+
+
+        float batteryLevel = batteryADC.calculateBatteryLevel();
+        printf("Battery level: %.2f%%\n", batteryLevel);
+
         // Read data from HM3301
         if (hm3301_sensor.read(pm1_0, pm2_5, pm10)) {
             printf("HM3301 - PM1.0: %u µg/m3, PM2.5: %u µg/m3, PM10: %u µg/m3\n", pm1_0, pm2_5, pm10);
@@ -89,6 +104,13 @@ int main() {
 
         pas_co2_sensor.read();
         printf("CO2 concentration: %u ppm\n", pas_co2_sensor.getResult());
+
+
+
+
+
+
+
 
         // Delay between readings
         sleep_ms(1000);
