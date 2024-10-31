@@ -41,6 +41,7 @@ add_executable(pico_30_10_2024
     pico_30_10_2024.cpp 
     libs/bme688/bme688.cpp
     libs/hm3301/hm3301.cpp
+    libs/pas_co2/pas_co2.cpp
 )
 
 pico_set_program_name(pico_30_10_2024 "pico_30_10_2024")

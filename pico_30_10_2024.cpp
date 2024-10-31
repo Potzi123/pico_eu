@@ -60,6 +60,13 @@ int main() {
     }
     printf("BME688 sensor initialized\n");
 
+    Pas_co2 pas_co2_sensor(PAS_CO2_ADDRESS, I2C_PORT);
+    if (pas_co2_sensor.init() != 0) {
+        printf("Sensor initialization failed.\n");
+        return 1;
+    }
+    printf("PAS_CO2 sensor initialized\n");
+
     // Main loop
     while (true) {
         uint16_t pm1_0, pm2_5, pm10;
@@ -80,6 +87,8 @@ int main() {
             printf("Failed to read BME688 data\n");
         }
 
+        pas_co2_sensor.read();
+        printf("CO2 concentration: %u ppm\n", pas_co2_sensor.getResult());
 
         // Delay between readings
         sleep_ms(1000);

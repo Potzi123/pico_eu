@@ -1,45 +1,40 @@
+#pragma once
+
 #include <stdio.h>
 #include "pico/stdlib.h"
-#include "pico/cyw43_arch.h"
 #include "hardware/i2c.h"
-#include "tusb.h"
 
-class Pas_co2
-{
+class Pas_co2 {
 public:
-    // I2C device-address PAS-CO2
-    uint8_t PAS_CO2_ADDR = 0x28;
+    // Constructor to initialize the I2C address and instance
+    Pas_co2(uint8_t address, i2c_inst_t* i2c_instance);
 
-    // PAS-CO2 registers
-    uint8_t MEAS_RATE_H = 0x02;
-    uint8_t MEAS_RATE_L = 0x03;
-    uint8_t MEAS_CFG = 0x04;
-    uint8_t CO2PPM_H = 0x05;
-    uint8_t CO2PPM_L = 0x06;
-    uint8_t MEAS_STS = 0x07;  //Bit 4 in this register indicates if unread data in CO2PPM_H & CO2PPM_L registers is available
+    // Public method to initialize the sensor
+    int init();
 
-    uint8_t COMP_BIT = 0b00010000;
+    // Public method to read CO2 concentration from the sensor
+    void read();
+
+    // Getter for the CO2 result value
+    uint16_t getResult() const { return result; }
+
+private:
+    // I2C parameters
+    uint8_t i2c_address;
+    i2c_inst_t* i2c;
+
+    // Sensor registers and control bits
+    const uint8_t MEAS_RATE_H = 0x02;
+    const uint8_t MEAS_RATE_L = 0x03;
+    const uint8_t MEAS_CFG = 0x04;
+    const uint8_t CO2PPM_H = 0x05;
+    const uint8_t CO2PPM_L = 0x06;
+    const uint8_t MEAS_STS = 0x07;
+    const uint8_t COMP_BIT = 0x10;  // Bit 4 indicates unread data availability
+
+    // Sensor data variables
     uint8_t lsb;
     uint8_t msb;
     uint8_t data_rdy;
     uint16_t result;
-
-public:
-    uint16_t getResult()
-    {
-        return this->result;
-    }
-
-public:
-    void setResult(uint16_t result)
-    {
-        this->result = result;
-    }
-
-public:
-    int pas_co2_init();
-    void pas_co2_read();
-    
 };
-
-
