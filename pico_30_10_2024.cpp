@@ -16,6 +16,7 @@
 #include "libs/bme688/bme688.h"
 #include "libs/pas_co2/pas_co2.h"
 #include "libs/adc/adc.h"
+#include "libs/gps/gps.h"
 
 
 // I2C configuration and sensor addresses
@@ -25,6 +26,11 @@
 #define HM3301_ADDRESS 0x40
 #define BME688_ADDRESS 0x76
 #define PAS_CO2_ADDRESS 0x28
+
+#define UART0_UART_ID uart0
+#define UART0_BAUD_RATE 9600
+#define UART0_TX_PIN 0
+#define UART0_RX_PIN 1
 
 #define ADC 26
 
@@ -36,8 +42,18 @@ void i2c_init() {
     gpio_pull_up(I2C_SCL);
 }
 
+void setup_uart() {
+    // Initialize UART for GPS communication
+    uart_init(UART0_UART_ID, UART0_BAUD_RATE);
+    gpio_set_function(UART0_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART0_RX_PIN, GPIO_FUNC_UART);
+}
+
 
 int main() {
+
+
+
     stdio_init_all();
 
     while (!stdio_usb_connected()) {
@@ -76,12 +92,28 @@ int main() {
     }
     printf("PAS_CO2 sensor initialized\n");
 
+
+    // Initialize GPS
+    std::string buffer;
+    double latitude, longitude;
+    char nsIndicator, ewIndicator;
+    std::string time;
+
+
+    setup_uart();
+    myGPS gps(UART0_UART_ID, UART0_BAUD_RATE, UART0_TX_PIN, UART0_RX_PIN);
+    gps.init();
+    printf("GPS initialized\n");
+
+
     // Main loop
     while (true) {
+        
+        //HM3301
         uint16_t pm1_0, pm2_5, pm10;
+        
+        //BME688
         float temperature, humidity, pressure, gas_resistance;
-
-
 
 
         float batteryLevel = batteryADC.calculateBatteryLevel();
@@ -106,9 +138,15 @@ int main() {
         printf("CO2 concentration: %u ppm\n", pas_co2_sensor.getResult());
 
 
-
-
-
+        // Attempt to read a line of GPS data
+        if (gps.readLine(buffer, latitude, nsIndicator, longitude, ewIndicator, time) == 0) {
+            // Display the parsed GPS data
+            printf("GPS Data: Latitude = %.6f%c, Longitude = %.6f%c, Time = %s\n", 
+                   latitude, nsIndicator, longitude, ewIndicator, time.c_str());
+        } else {
+            // Print error if GPS data could not be read
+            printf("Failed to read GPS data or no data available.\n");
+        }
 
 
 
