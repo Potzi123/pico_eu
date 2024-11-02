@@ -16,6 +16,7 @@
 #include "libs/bme688/bme688.h"
 #include "libs/pas_co2/pas_co2.h"
 #include "libs/adc/adc.h"
+#include "libs/wifi/wifi.h"
 
 
 // I2C configuration and sensor addresses
@@ -27,6 +28,8 @@
 #define PAS_CO2_ADDRESS 0x28
 
 #define ADC 26
+
+
 
 void i2c_init() {
     i2c_init(I2C_PORT, 400000);  // Initialize I2C at 400kHz
@@ -43,6 +46,25 @@ int main() {
     while (!stdio_usb_connected()) {
         sleep_ms(100);  // Poll every 100ms
     }
+
+
+    myWIFI wifi;
+
+    // Initialize WiFi
+    if (wifi.init() != 0) {
+        printf("WiFi initialization failed.\n");
+        return 1;
+    }
+    printf("WiFi initialized successfully.\n");
+
+    // Scan and connect to WiFi
+    if (wifi.scanAndConnect() != 0) {
+        printf("WiFi scan and connection attempt failed.\n");
+        return 1;
+    }
+    printf("Successfully connected to WiFi.\n");
+
+
 
     i2c_init();
     printf("I2C initialized\n");
@@ -81,7 +103,12 @@ int main() {
         uint16_t pm1_0, pm2_5, pm10;
         float temperature, humidity, pressure, gas_resistance;
 
-
+        wifi.poll();
+        if (wifi.getConnected() == CYW43_LINK_UP) {
+            printf("WiFi is connected.\n");
+        } else {
+            printf("WiFi is not connected.\n");
+        }
 
 
         float batteryLevel = batteryADC.calculateBatteryLevel();
