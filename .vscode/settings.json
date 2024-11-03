@@ -90,6 +90,7 @@
         "stdexcept": "cpp",
         "streambuf": "cpp",
         "cinttypes": "cpp",
-        "typeinfo": "cpp"
+        "typeinfo": "cpp",
+        "epd_1in54_v2.h": "c"
     }
 }

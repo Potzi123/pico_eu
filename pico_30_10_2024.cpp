@@ -17,6 +17,9 @@
 #include "libs/pas_co2/pas_co2.h"
 #include "libs/adc/adc.h"
 #include "libs/wifi/wifi.h"
+#include "libs/eInk/GUI/GUI_Paint.h"
+#include "libs/eInk/EPD_1in54_V2/EPD_1in54_V2.h"
+#include "libs/eInk/Fonts/fonts.h"
 
 
 // I2C configuration and sensor addresses
@@ -29,7 +32,50 @@
 
 #define ADC 26
 
+myWIFI wifi;
+myADC batteryADC(ADC);
+HM3301 hm3301_sensor(I2C_PORT, HM3301_ADDRESS, I2C_SDA, I2C_SCL);
+BME688 bme688_sensor(I2C_PORT, BME688_ADDRESS, I2C_SDA, I2C_SCL);
+Pas_co2 pas_co2_sensor(PAS_CO2_ADDRESS, I2C_PORT);
 
+// Create new image cache
+    UBYTE *ImageBuffer;
+    UWORD Imagesize = ((EPD_1IN54_V2_WIDTH % 8 == 0) ? (EPD_1IN54_V2_WIDTH / 8) : (EPD_1IN54_V2_WIDTH / 8 + 1)) * EPD_1IN54_V2_HEIGHT;
+
+void eInk(){
+    // Init EPD //
+    Init_Device();
+    printf("init done\n");
+    EPD_1IN54_V2_Init();
+    printf("EPD initialized\n");
+    EPD_1IN54_V2_Clear();
+    printf("EPD cleared\n");
+    if ((ImageBuffer = (UBYTE *)malloc(Imagesize)) == NULL)
+    {
+        printf("Failed to apply for memory...\n");
+    }
+    Paint_NewImage(ImageBuffer, EPD_1IN54_V2_WIDTH, EPD_1IN54_V2_HEIGHT, 270, WHITE);
+    printf("Paint_NewImage done\n");
+    Paint_SelectImage(ImageBuffer);
+    Paint_Clear(WHITE);
+}
+
+int wifi_init() {
+    // Initialize WiFi
+    if (wifi.init() != 0) {
+        printf("WiFi initialization failed.\n");
+        return 1;
+    }
+    printf("WiFi initialized successfully.\n");
+
+    // Scan and connect to WiFi
+    if (wifi.scanAndConnect() != 0) {
+        printf("WiFi scan and connection attempt failed.\n");
+        return 1;
+    }
+    printf("Successfully connected to WiFi.\n");
+    return 0;
+}
 
 void i2c_init() {
     i2c_init(I2C_PORT, 400000);  // Initialize I2C at 400kHz
@@ -47,22 +93,20 @@ int main() {
         sleep_ms(100);  // Poll every 100ms
     }
 
+    eInk();
 
-    myWIFI wifi;
+    Paint_DrawString_EN(10, 5, "Hello World", &Font24, BLACK, WHITE); //Write "Hello World" in the Buffer
+    Paint_DrawNum(10, 25, 03112024, &Font20, BLACK, WHITE); // Write 03112024 in the Buffer
+    EPD_1IN54_V2_Display(ImageBuffer); //Display the Buffer on e-Paper Display
+    EPD_1IN54_V2_Sleep(); //enter deep sleep
 
-    // Initialize WiFi
-    if (wifi.init() != 0) {
+    sleep_ms(2000);
+
+    if(wifi_init() != 0) {
         printf("WiFi initialization failed.\n");
         return 1;
     }
     printf("WiFi initialized successfully.\n");
-
-    // Scan and connect to WiFi
-    if (wifi.scanAndConnect() != 0) {
-        printf("WiFi scan and connection attempt failed.\n");
-        return 1;
-    }
-    printf("Successfully connected to WiFi.\n");
 
 
 
@@ -70,13 +114,11 @@ int main() {
     printf("I2C initialized\n");
 
 
-    myADC batteryADC(ADC);
     batteryADC.init();
     printf("ADC initialized\n");
 
 
     // Initialize the HM3301 sensor
-    HM3301 hm3301_sensor(I2C_PORT, HM3301_ADDRESS, I2C_SDA, I2C_SCL);
     if (!hm3301_sensor.begin()) {
         printf("Failed to initialize HM3301 sensor\n");
         return 1;
@@ -84,14 +126,12 @@ int main() {
     printf("HM3301 sensor initialized\n");
 
 
-    BME688 bme688_sensor(I2C_PORT, BME688_ADDRESS, I2C_SDA, I2C_SCL);
     if (!bme688_sensor.begin()) {
         printf("Failed to initialize BME688 sensor\n");
         return 1;
     }
     printf("BME688 sensor initialized\n");
 
-    Pas_co2 pas_co2_sensor(PAS_CO2_ADDRESS, I2C_PORT);
     if (pas_co2_sensor.init() != 0) {
         printf("Sensor initialization failed.\n");
         return 1;
@@ -132,14 +172,10 @@ int main() {
         pas_co2_sensor.read();
         printf("CO2 concentration: %u ppm\n", pas_co2_sensor.getResult());
 
-
-
-
-
-
-
-
         // Delay between readings
         sleep_ms(1000);
     }
+
+    free(ImageBuffer);
+    return 0;
 }
