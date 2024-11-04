@@ -57,6 +57,8 @@ add_executable(pico_30_10_2024
     libs/eInk/Fonts/font16.c
     libs/eInk/Fonts/font20.c
     libs/eInk/Fonts/font24.c
+    libs/flash/pico_flash.c
+    libs/flash/pico_flash.h
 )
 
 pico_set_program_name(pico_30_10_2024 "pico_30_10_2024")
@@ -80,6 +82,8 @@ target_link_libraries(pico_30_10_2024
     hardware_interp
     hardware_timer
     hardware_watchdog
+    hardware_flash
+    hardware_sync
     pico_stdio_usb
     pico_cyw43_arch_lwip_threadsafe_background
     BME68x_LIB

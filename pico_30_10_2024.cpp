@@ -10,6 +10,8 @@
 #include "hardware/clocks.h"
 #include "pico/cyw43_arch.h"
 #include "hardware/uart.h"
+#include "hardware/flash.h"
+#include "hardware/sync.h"
 
 #include "password.h"
 #include "libs/hm3301/hm3301.h"
@@ -20,6 +22,7 @@
 #include "libs/eInk/GUI/GUI_Paint.h"
 #include "libs/eInk/EPD_1in54_V2/EPD_1in54_V2.h"
 #include "libs/eInk/Fonts/fonts.h"
+#include "libs/flash/pico_flash.h"
 
 
 // I2C configuration and sensor addresses
@@ -31,6 +34,10 @@
 #define PAS_CO2_ADDRESS 0x28
 
 #define ADC 26
+
+#define FLASH_TARGET_OFFSET (1792*1024)                                                         //++ Starting Flash Storage location after 1.8MB ( of the 2MB )
+const uint8_t *flash_target_contents = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);      //++ Pointer pointing at the Flash Address Location
+
 
 myWIFI wifi;
 myADC batteryADC(ADC);
@@ -58,23 +65,7 @@ void eInk(){
     printf("Paint_NewImage done\n");
     Paint_SelectImage(ImageBuffer);
     Paint_Clear(WHITE);
-}
-
-int wifi_init() {
-    // Initialize WiFi
-    if (wifi.init() != 0) {
-        printf("WiFi initialization failed.\n");
-        return 1;
-    }
-    printf("WiFi initialized successfully.\n");
-
-    // Scan and connect to WiFi
-    if (wifi.scanAndConnect() != 0) {
-        printf("WiFi scan and connection attempt failed.\n");
-        return 1;
-    }
-    printf("Successfully connected to WiFi.\n");
-    return 0;
+    EPD_1IN54_V2_Clear();
 }
 
 void i2c_init() {
@@ -87,6 +78,8 @@ void i2c_init() {
 
 
 int main() {
+    double flash_size = 0;
+
     stdio_init_all();
 
     while (!stdio_usb_connected()) {
@@ -96,18 +89,25 @@ int main() {
     eInk();
 
     Paint_DrawString_EN(10, 5, "Hello World", &Font24, BLACK, WHITE); //Write "Hello World" in the Buffer
-    Paint_DrawNum(10, 25, 03112024, &Font20, BLACK, WHITE); // Write 03112024 in the Buffer
+    Paint_DrawNum(10, 25, flash_target_contents[0], &Font20, BLACK, WHITE); // Write 03112024 in the Buffer
     EPD_1IN54_V2_Display(ImageBuffer); //Display the Buffer on e-Paper Display
     EPD_1IN54_V2_Sleep(); //enter deep sleep
 
     sleep_ms(2000);
 
-    if(wifi_init() != 0) {
-        printf("WiFi initialization failed.\n");
-        return 1;
-    }
-    printf("WiFi initialized successfully.\n");
-
+        // Initialize WiFi
+    //if (wifi.init() != 0) {
+    //    printf("WiFi initialization failed.\n");
+    //    return 1;
+    //}
+    //printf("WiFi initialized successfully.\n");
+//
+    //// Scan and connect to WiFi
+    //if (wifi.scanAndConnect() != 0) {
+    //    printf("WiFi scan and connection attempt failed.\n");
+    //    return 1;
+    //}
+    //printf("Successfully connected to WiFi.\n");
 
 
     i2c_init();
@@ -138,10 +138,12 @@ int main() {
     }
     printf("PAS_CO2 sensor initialized\n");
 
+
     // Main loop
     while (true) {
         uint16_t pm1_0, pm2_5, pm10;
         float temperature, humidity, pressure, gas_resistance;
+        uint32_t flash_data[FLASH_PAGE_SIZE];
 
         wifi.poll();
         if (wifi.getConnected() == CYW43_LINK_UP) {
@@ -171,6 +173,28 @@ int main() {
 
         pas_co2_sensor.read();
         printf("CO2 concentration: %u ppm\n", pas_co2_sensor.getResult());
+
+        flash_data[0] = pm1_0;
+        flash_data[1] = pm2_5;
+        flash_data[2] = pm10;
+        flash_data[3] = temperature;
+        flash_data[4] = humidity;
+        flash_data[5] = pressure;
+        flash_data[6] = gas_resistance;
+        flash_data[7] = batteryLevel;
+        flash_data[8] = pas_co2_sensor.getResult();
+
+        pico_flash_write(FLASH_TARGET_OFFSET + flash_size, flash_data, sizeof(flash_data));
+        int * flash_target_contents = pico_flash_read(FLASH_TARGET_OFFSET + flash_size, sizeof(flash_data));
+
+        flash_size += sizeof(flash_data);
+
+        ImageBuffer = 0;
+        Paint_DrawNum(10, 25, flash_target_contents[3], &Font20, BLACK, WHITE); // Write 03112024 in the Buffer
+        EPD_1IN54_V2_Display(ImageBuffer); //Display the Buffer on e-Paper Display
+        EPD_1IN54_V2_Sleep(); //enter deep sleep
+
+
 
         // Delay between readings
         sleep_ms(1000);
