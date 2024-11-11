@@ -64,6 +64,18 @@ bool BME688::readData(float &temperature, float &humidity, float &pressure, floa
     struct bme68x_data data;
     uint32_t del_period;
 
+    // Apply heater configuration only on the first measurement
+    if (!heaterConfigured_) {
+        heatr_conf_.enable = BME68X_ENABLE;
+        heatr_conf_.heatr_temp = 320;     // Target temperature in °C
+        heatr_conf_.heatr_dur = 150;      // Heating duration in ms
+
+        if (bme68x_set_heatr_conf(BME68X_FORCED_MODE, &heatr_conf_, &dev_) != BME68X_OK) {
+            return false;
+        }
+        heaterConfigured_ = true;  // Mark the heater as configured
+    }
+
     // Set the sensor to forced mode
     if (bme68x_set_op_mode(BME68X_FORCED_MODE, &dev_) != BME68X_OK) {
         return false;

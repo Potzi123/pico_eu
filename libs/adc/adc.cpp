@@ -1,44 +1,64 @@
 #include "adc.h"
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
 
-myADC::myADC(int pin) : gpioPin(pin) {}
+// Constructor to initialize the GPIO pin and number of samples for averaging
+myADC::myADC(int pin, int samples) : gpioPin(pin), numSamples(samples) {}
 
-void myADC::init() {
-    if (gpioPin < 26 || gpioPin > 28) {
-        printf("Invalid GPIO pin: %d. ADC pins are 26, 27, or 28.", gpioPin);
+// Initialize the ADC for the specified GPIO pin
+void myADC::init() const {
+    if (gpioPin != 26) {  // Ensure only GPIO 26 (ADC0) is allowed for this instance
+        printf("ERROR: Invalid GPIO pin %d. Only GPIO 26 (ADC0) is valid for this instance.\n", gpioPin);
         return;
     }
 
-    adc_init();
-    adc_gpio_init(gpioPin);
-    adc_select_input(gpioPin - 26);
-    printf("Initialized ADC on GPIO pin %d", gpioPin);
+    adc_init();  // Initialize the ADC hardware
+    adc_gpio_init(gpioPin);  // Initialize the specified GPIO pin for ADC use
+    adc_select_input(0);  // Select ADC input 0 (corresponding to GPIO 26)
+    printf("INFO: ADC initialized on GPIO pin %d (ADC0).\n", gpioPin);
 }
 
-float myADC::readVoltage() {
-    uint16_t result = adc_read();
-    float voltage = result * conversionFactor;
-    //printf("Read voltage: %.3fV", voltage);
+// Read a single voltage reading from the ADC pin
+float myADC::readVoltage() const {
+    uint16_t result = adc_read();  // Read the raw ADC value
+    float voltage = result * conversionFactor * 2;  // Adjust for 1:1 voltage divider
     return voltage;
 }
 
-float myADC::calculateBatteryLevel() {
-    float voltage = readVoltage();
-    if (voltage < minVoltage) {
-        printf("Voltage below min threshold: %.3fV", voltage);
-        return 0.0f;  // Battery level is 0% if voltage is below minVoltage
+// Read and calculate the average voltage from the ADC pin
+float myADC::readAverageVoltage() const {
+    uint32_t sum = 0;
+    for (int i = 0; i < numSamples; ++i) {
+        sum += adc_read();  // Sum up the ADC readings
+        sleep_ms(1);  // Small delay between readings for stability
     }
+    float averageReading = static_cast<float>(sum) / numSamples;
+    
+    // Debug output to show raw ADC value
+    printf("DEBUG: Raw ADC average reading: %.2f\n", averageReading);
+
+    float voltage = (averageReading * conversionFactor * 2) + offset;  // Adjust for 1:1 voltage divider
+    printf("DEBUG: Converted voltage (before scaling back): %.3fV\n", voltage);
+    return voltage;
+}
+
+// Calculate the battery level as a percentage based on the voltage
+float myADC::calculateBatteryLevel() const {
+    float voltage = readAverageVoltage();
+
+    if (voltage < minVoltage) {
+        printf("INFO: Voltage %.3fV is below the minimum threshold. Battery level is 0%%.\n", voltage);
+        return 0.0f;
+    }
+
     if (voltage > maxVoltage) {
-        printf("Voltage above max threshold: %.3fV", voltage);
-        return 100.0f;  // Battery level is 100% if voltage is above maxVoltage
+        printf("INFO: Voltage %.3fV is above the maximum threshold. Battery level is 100%%.\n", voltage);
+        return 100.0f;
     }
 
     // Calculate the battery level as a percentage
-    float scaledValue = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100.0f;
-    //printf("Voltage: %.3fV, Battery level: %.2f%%", voltage, scaledValue);
-    sleep_ms(100);
-    return scaledValue;
+    float batteryLevel = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100.0f;
+    printf("INFO: Voltage: %.3fV, Battery level: %.2f%%\n", voltage, batteryLevel);
+    return batteryLevel;
 }

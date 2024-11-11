@@ -7,7 +7,7 @@
 void Init_Device()
 {
     /* Enable SPI at 1MHz*/
-    spi_init(EPD_SPI_PORT, 1000 * 1000);
+    spi_init(EPD_SPI_PORT, 2000 * 1000);
 
     gpio_set_function(EPD_PIN_DC, GPIO_FUNC_SPI);
     gpio_set_function(EPD_PIN_CS, GPIO_FUNC_SPI);

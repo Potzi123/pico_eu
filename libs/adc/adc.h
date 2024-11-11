@@ -1,37 +1,29 @@
 //
-// Created by Benedikt Walter on 20.02.24.
+// Created by [Your Name] on [Date].
 //
 
 #ifndef MY_PROJECT_MYADC_H
 #define MY_PROJECT_MYADC_H
 
-#include <stdio.h>
-
-#ifdef ERROR_ADC_LOG
-#define ERROR_ADC(fmt, ...) printf("ERROR-ADC: " fmt "\n", ##__VA_ARGS__)
-#else
-#define ERROR_ADC(fmt, ...)
-#endif
-
-#ifdef DEBUG_ADC_LOG
-#define DEBUG_ADC(fmt, ...) printf("DEBUG-ADC: " fmt "\n", ##__VA_ARGS__)
-#else
-#define DEBUG_ADC(fmt, ...)
-#endif
+#include <cstdio>
 
 class myADC {
 private:
-    const float minVoltage = 3.0f;   // Battery level 0%
-    const float maxVoltage = 4.2f;   // Battery level 100%
-    const float conversionFactor = (3.3f / 4096) * 2;  // Adjusted for a 2:1 voltage divider
+    static constexpr float minVoltage = 3.5f;   // Battery level 0%
+    static constexpr float maxVoltage = 4.2f;   // Battery level 100%
+    static constexpr float conversionFactor = 3.3f / 4095;  // For 12-bit ADC (0-4095)
+    float offset = 0.2f;  // Adjust as needed based on measurements
+
+    
     int gpioPin;
+    int numSamples;
 
 public:
-    explicit myADC(int pin);
-    void init();
-    float readVoltage();
-    float calculateBatteryLevel();
+    explicit myADC(int pin, int samples = 10);  // Constructor with optional sample count
+    void init() const;
+    float readVoltage() const;
+    float readAverageVoltage() const;  // New method to read averaged voltage
+    float calculateBatteryLevel() const;
 };
 
-
-#endif //MY_PROJECT_MYADC_H
+#endif // MY_PROJECT_MYADC_H
