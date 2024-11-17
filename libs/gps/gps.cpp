@@ -1,137 +1,74 @@
-//
-// Created by Benedikt Walter on 18.01.24.
-//
-
 #include "gps.h"
-#include "stdio.h"
-#include <sstream>
+#include <cstring>
+#include <cstdlib>
 
+#define GPS_TX_PIN 0
+#define GPS_RX_PIN 1
 
-myGPS::myGPS(uart_inst_t *uart_id, int baud_rate, int tx_pin, int rx_pin) {
-    this->uart_id = uart_id;
-    this->baud_rate = baud_rate;
-    this->tx_pin = tx_pin;
-    this->rx_pin = rx_pin;
-    this->init();
+void init_gps(uart_inst_t *uart, uint baud_rate, uint tx_pin, uint rx_pin) {
+    uart_init(uart, baud_rate);
+    gpio_set_function(tx_pin, GPIO_FUNC_UART);
+    gpio_set_function(rx_pin, GPIO_FUNC_UART);
+    uart_set_format(uart, 8, 1, UART_PARITY_NONE);
+    uart_set_fifo_enabled(uart, true);
 }
 
-void myGPS::init() {
-    uart_init(this->uart_id, this->baud_rate);
-    gpio_set_function(this->tx_pin, GPIO_FUNC_UART);
-    gpio_set_function(this->rx_pin, GPIO_FUNC_UART);
-}
+// Read a GPS NMEA sentence
+bool read_gps_sentence(uart_inst_t *uart, char *buffer, size_t buffer_size) {
+    size_t index = 0;
 
-/** /@return 0 on sucess \n 1 on not sucess
- */
-int myGPS::readLine(std::string &line) {
-    if(!uart_is_readable(this->uart_id)) {
-        printf("uart not readable\n");
-        return 1;
-    }
-
-    uint64_t start_time = time_us_64();  // Start time for timeout
-
-    do {
-        this->buffer = "";
-        while (true) {
-            // Check if we have exceeded the timeout (e.g., 2 seconds)
-            if (time_us_64() - start_time > 2000000) {
-                printf("Timeout: No complete sentence received\n");
-                return 1;  // Exit with error
-            }
-
-            // Check if data is available
-            if (uart_is_readable(this->uart_id)) {
-                char c = uart_getc(this->uart_id);
-                this->buffer += c;
-                
-                // Break if we received a newline character
-                if (c == '\n') break;
+    while (true) {
+        if (uart_is_readable(uart)) {
+            char c = uart_getc(uart);
+            if (c == '$') {
+                buffer[index++] = c;
+                break;
             }
         }
+    }
 
-        // Check if we received anything meaningful
-        if (buffer.empty()) {
-            printf("buffer empty\n");
-            return 1;
+    while (index < buffer_size - 1) {
+        if (uart_is_readable(uart)) {
+            char c = uart_getc(uart);
+            buffer[index++] = c;
+
+            if (c == '\n') {
+                buffer[index] = '\0';
+                return true;
+            }
         }
-        printf("%s", this->buffer.c_str());
-    } while (this->buffer.substr(0, GNGLL.length()) != GNGLL);
+    }
 
-    line = this->buffer;
 
-    // Now proceed with parsing as before
-    std::istringstream iss(this->buffer);
-    std::string token;
-
-    // Skip the first token "$GNGLL,"
-    std::getline(iss, token, ',');
-
-    // Latitude
-    std::getline(iss, token, ',');
-    if (!token.empty())
-        this->latitude = std::stod(token.substr(0, 2)) + std::stod(token.substr(2)) / 60.0;
-    else
-        this->latitude = 0;
-
-    // N/S indicator
-    std::getline(iss, token, ',');
-    this->nsIndicator = token.empty() ? ' ' : token[0];
-
-    // Longitude
-    std::getline(iss, token, ',');
-    if (!token.empty())
-        this->longitude = std::stod(token.substr(0, 3)) + std::stod(token.substr(3)) / 60.0;
-    else
-        this->longitude = 0;
-
-    // E/W indicator
-    std::getline(iss, token, ',');
-    this->ewIndicator = token.empty() ? ' ' : token[0];
-
-    // Time
-    std::getline(iss, token, ',');
-    if (!token.empty() && token.size() >= 6)
-        this->time = token.substr(0, 2) + ":" + token.substr(2, 2) + ":" + token.substr(4, 2);
-    else
-        this->time = "00:00:00";
-
-    printf("Long: %f%c\n", this->longitude, this->nsIndicator);
-    printf("Lat: %f%c\n", this->latitude, this->ewIndicator);
-    printf("Time: %s\n\n", this->time.c_str());
-
-    return 0;
+    buffer[buffer_size - 1] = '\0';
+    return false;
 }
 
-int myGPS::readLine(std::string &buffer, double &latitude, char &nsIndicator, double &longitude, char &ewIndicator, std::string &time) {
-    if(this->readLine(buffer)) {
-        return 1;
-    }
-    latitude = this->latitude;
-    nsIndicator = this->nsIndicator;
-    longitude = this->longitude;
-    ewIndicator = this->ewIndicator;
-    time = this->time;
-    return 0;
-}
+void process_gps_data(const char *nmea_sentence, float &latitude, float &longitude, bool &valid) {
 
-std::string myGPS::to_string(double latitude, char nsIndicator, double longitude, char ewIndicator, std::string &time) {
-    std::string flash_data;
-    for(auto i : std::to_string(latitude)) {
-        flash_data.push_back(i);
+    if (strstr(nmea_sentence, "$GPGGA") || strstr(nmea_sentence, "$GPRMC")) {
+
+        char *token = strtok((char *)nmea_sentence, ",");
+        int field_count = 0;
+
+        while (token) {
+            field_count++;
+
+            if (field_count == 3) {
+                latitude = atof(token) / 100.0; // Zu Dezimalzahl konverten
+            }
+
+            if (field_count == 5) {
+                longitude = atof(token) / 100.0;
+            }
+
+            if (field_count == 2 && token[0] == 'A') {
+                valid = true;
+            }
+
+            token = strtok(NULL, ",");
+        }
+    } else {
+        valid = false;
     }
-    flash_data.push_back('|');
-    flash_data.push_back(nsIndicator);
-    flash_data.push_back('|');
-    for(auto i : std::to_string(longitude)) {
-        flash_data.push_back(i);
-    }
-    flash_data.push_back('|');
-    flash_data.push_back(ewIndicator);
-    flash_data.push_back('|');
-    for(auto i : time) {
-        flash_data.push_back(i);
-    }
-    flash_data.push_back('^');
-    return flash_data;
 }

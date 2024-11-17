@@ -1,55 +1,13 @@
-// gps.h
+#ifndef GPS_H
+#define GPS_H
 
-#ifndef MY_PROJECT_MYGPS_H
-#define MY_PROJECT_MYGPS_H
-
-#include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
-#include <string>
-#include "pico/time.h"
 
-#ifdef ERROR_GPS_LOG
-#define ERROR_GPS(fmt, ...) printf("ERROR-GPS: " fmt "\n", ##__VA_ARGS__)
-#else
-#define ERROR_GPS(fmt, ...)
-#endif
+#define GPS_BUFFER_SIZE 256
 
-#ifdef DEBUG_GPS_LOG
-#define DEBUG_GPS(fmt, ...) printf("DEBUG-GPS: " fmt "\n", ##__VA_ARGS__)
-#else
-#define DEBUG_GPS(fmt, ...)
-#endif
+void init_gps(uart_inst_t *uart, uint baud_rate, uint tx_pin, uint rx_pin);
+bool read_gps_sentence(uart_inst_t *uart, char *buffer, size_t buffer_size);
+void process_gps_data(const char *nmea_sentence, float &latitude, float &longitude, bool &valid);
 
-const std::string GNTXT = "$GNTXT";
-const std::string GNGLL = "$GNGLL";
-
-class myGPS {
-private:
-    uart_inst_t *uart_id;
-    int baud_rate;
-    int tx_pin;
-    int rx_pin;
-    double latitude = 0;
-    char nsIndicator = ' ';
-    double longitude = 0;
-    char ewIndicator = ' ';
-    std::string time = "00:00:00";
-    std::string buffer;
-
-public:
-    myGPS(uart_inst_t *, int, int, int);
-    void init();
-    int readLine(std::string &);
-    int readLine(std::string &, double &, char &, double &, char &, std::string &);
-    std::string to_string(double, char, double, char, std::string &);
-
-    // Getter methods for accessing private member variables
-    double getLatitude() const { return latitude; }
-    char getNsIndicator() const { return nsIndicator; }
-    double getLongitude() const { return longitude; }
-    char getEwIndicator() const { return ewIndicator; }
-    std::string getTime() const { return time; }
-};
-
-#endif //MY_PROJECT_MYGPS_H
+#endif  // GPS_H
