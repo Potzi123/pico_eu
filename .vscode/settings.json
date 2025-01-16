@@ -91,6 +91,14 @@
         "streambuf": "cpp",
         "cinttypes": "cpp",
         "typeinfo": "cpp",
-        "epd_1in54_v2.h": "c"
+        "epd_1in54_v2.h": "c",
+        "any": "cpp",
+        "codecvt": "cpp",
+        "forward_list": "cpp",
+        "ratio": "cpp",
+        "ranges": "cpp",
+        "span": "cpp",
+        "valarray": "cpp",
+        "variant": "cpp"
     }
 }

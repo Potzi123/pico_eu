@@ -57,8 +57,8 @@ add_executable(pico_30_10_2024
     libs/eInk/Fonts/font16.c
     libs/eInk/Fonts/font20.c
     libs/eInk/Fonts/font24.c
-    libs/flash/pico_flash.c
-    libs/flash/pico_flash.h
+    libs/gps/myGPS.cpp
+
 )
 
 pico_set_program_name(pico_30_10_2024 "pico_30_10_2024")
@@ -84,12 +84,14 @@ target_link_libraries(pico_30_10_2024
     hardware_watchdog
     hardware_flash
     hardware_sync
+    hardware_rtc
     pico_stdio_usb
     pico_cyw43_arch_lwip_threadsafe_background
     BME68x_LIB
     epd_1in54_v2 
     epd_gui_paint 
     epd_fonts 
+    pico_flash
 )
 
 # Add the standard include files to the build

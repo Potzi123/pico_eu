@@ -19,7 +19,7 @@ private:
     struct bme68x_conf conf_;
     struct bme68x_heatr_conf heatr_conf_;
 
-    bool heaterConfigured_ = false;  // Flag to track heater configuration
+    bool heaterConfigured_ = true;  // Flag to track heater configuration
 };
 
 #endif // BME688_H

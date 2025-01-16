@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+#include <vector>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "hardware/i2c.h"
@@ -17,6 +21,10 @@
 #include "libs/eInk/GUI/GUI_Paint.h"
 #include "libs/eInk/EPD_1in54_V2/EPD_1in54_V2.h"
 #include "libs/eInk/Fonts/fonts.h"
+#include "libs/gps/myGPS.h"
+#include <cstdio>
+
+
 
 // Flash and display constants
 #define I2C_PORT i2c0
@@ -41,6 +49,23 @@
 
 // Variables for sensors, display, and data
 #define PAGE_COUNT 4
+
+#define TLS_CLIENT_SERVER        "www.gm4s.eu"
+/*#define TLS_CLIENT_HTTP_REQUEST  "GET /api/test HTTP/1.1\r\n" \
+                                 "Host: " TLS_CLIENT_SERVER "\r\n" \
+                                 "Connection: close\r\n" \
+                                 "\r\n"*/
+#define TLS_CLIENT_HTTP_REQUEST  "POST /api/addMarker HTTP/1.1\r\n" \
+                                 "Host: " TLS_CLIENT_SERVER "\r\n" \
+                                 "Content-Type: application/json\r\n" \
+                                 "Content-Length: 203\r\n" \
+                                 "Connection: close\r\n" \
+                                 "\r\n" \
+                                 "{\"token\":\"86ea63a5-4ea6-4bd1-88f0-bb370970dd16\"," \
+                                 "\"measured_at\":\"2024-10-23T12:28:02.379+00:00\"," \
+                                 "\"lat\":48.2072620612573,\"long\":15.61750700948781,\"co2\":3,\"hum\":4," \
+                                 "\"temp\":5,\"part_2_5\":6,\"part_5\":7,\"part_10\":8}"
+#define TLS_CLIENT_TIMEOUT_SECS  6000
 
 bool fist_time = true;
 
@@ -69,16 +94,30 @@ volatile bool refresh_display = false;
 absolute_time_t last_refresh_time;
 
 // Variables for sensor data storage
-float temp = 0.0;
-float hum = 0.0;
-float pres = 0.0;
-float gasRes = 0.0;
-uint16_t pm1_0 = 0;
-uint16_t pm2_5 = 0;
-uint16_t pm10 = 0;
-uint32_t co2 = 0;
+
+struct SensorData {
+    float temp = 0.0;
+    float hum = 0.0;
+    float pres = 0.0;
+    float gasRes = 0.0;
+    uint16_t pm2_5 = 0;
+    uint16_t pm5 = 0;
+    uint16_t pm10 = 0;
+    uint32_t co2 = 0;
+    uint32_t latitude = 0;
+    uint32_t longitude = 0;
+    uint32_t timestamp = 0;
+
+} Sensor;
+
+SensorData sensor_data_obj = {0,0,0,0,0,0,0,0,0,0,0};
+
+std::vector<SensorData> sensor_data;
 
 float batteryLevel = 0;
+
+extern bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *server, const char *request, int timeout);
+
 
 // Function to initialize the eInk display
 void eInk_init() {
@@ -154,15 +193,6 @@ void displayStatus(float batteryLevel) {
     printf("Displayed battery level and sensor values on eInk display.\n");
 }
 
-// Save data to flash
-void saveToFlash(uint16_t pm1_0, uint16_t pm2_5, uint16_t pm10, float temperature, float humidity, float pressure, float gas_resistance, float batteryLevel, uint32_t co2) {
-    uint32_t flash_data[9] = { pm1_0, pm2_5, pm10, (uint32_t)temperature, (uint32_t)humidity, (uint32_t)pressure, (uint32_t)gas_resistance, (uint32_t)batteryLevel, co2 };
-    uint32_t ints = save_and_disable_interrupts(); // Disable interrupts
-    flash_range_program(FLASH_TARGET_OFFSET, (uint8_t*)flash_data, sizeof(flash_data));
-    restore_interrupts(ints); // Re-enable interrupts
-    printf("Saved data to flash memory.\n");
-}
-
 void drawBatteryIcon(int x, int y) {
     // Draw battery outline
     Paint_DrawRectangle(x, y, x + 30, y + 15, BLACK, DOT_PIXEL_1X1, DRAW_FILL_EMPTY);
@@ -190,6 +220,83 @@ void drawBatteryIcon(int x, int y) {
 
 }
 
+void drawWiFiConnectedIcon(int x, int y) {
+    // Set the top position for the icon
+    int topY = y + 10;  // Adjust `10` to bring it further down if necessary
+
+    // Outer arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(10 * cos(angle));  // Radius 10
+        int y1 = topY - (int)(10 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(10 * cos(angle + 0.1));
+        int y2 = topY - (int)(10 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Middle arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(7 * cos(angle));  // Radius 7
+        int y1 = topY - (int)(7 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(7 * cos(angle + 0.1));
+        int y2 = topY - (int)(7 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Inner arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(4 * cos(angle));  // Radius 4
+        int y1 = topY - (int)(4 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(4 * cos(angle + 0.1));
+        int y2 = topY - (int)(4 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Dot for signal
+    Paint_DrawPoint(x, topY + 5, BLACK, DOT_PIXEL_2X2, DOT_STYLE_DFT);  // Adjust dot position below arcs
+}
+
+
+
+
+
+void drawWiFiDisconnectedIcon(int x, int y) {
+    // Set the top position for the icon
+    int topY = y + 10;  // Adjust `10` to bring it further down if necessary
+
+    // Outer arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(10 * cos(angle));  // Radius 10
+        int y1 = topY - (int)(10 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(10 * cos(angle + 0.1));
+        int y2 = topY - (int)(10 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Middle arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(7 * cos(angle));  // Radius 7
+        int y1 = topY - (int)(7 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(7 * cos(angle + 0.1));
+        int y2 = topY - (int)(7 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Inner arc
+    for (float angle = 0; angle <= M_PI; angle += 0.1) {
+        int x1 = x + (int)(4 * cos(angle));  // Radius 4
+        int y1 = topY - (int)(4 * sin(angle));  // Subtract from topY
+        int x2 = x + (int)(4 * cos(angle + 0.1));
+        int y2 = topY - (int)(4 * sin(angle + 0.1));
+        Paint_DrawLine(x1, y1, x2, y2, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+    }
+
+    // Line through the symbol (diagonal slash for "disconnected")
+    Paint_DrawLine(x - 10, topY + 5, x + 10, topY - 5, BLACK, DOT_PIXEL_1X1, LINE_STYLE_SOLID);
+}
+
+
+
+
 
 
 
@@ -201,16 +308,25 @@ void displayPage(int page) {
     // Draw battery icon in the top right corner
     drawBatteryIcon(150, 5);
 
+    // Draw WiFi symbol to the left of the battery icon
+    if (wifi.getConnected() == 3) {
+        // Connected symbol
+        drawWiFiConnectedIcon(130, 5);  // Adjust the position as needed
+    } else {
+        // Disconnected symbol
+        drawWiFiDisconnectedIcon(130, 5);  // Adjust the position as needed
+    }
+
     if (page == 0) {
         // Page 1: BME688 Sensor Data
         Paint_DrawString_EN(10, 5, "BME688", &Font20, BLACK, WHITE);
 
         // Temp
-        sprintf(buffer, "Temp: %.2f C", temp);
+        sprintf(buffer, "Temp: %.2f C", sensor_data_obj.temp);
         Paint_DrawString_EN(10, 30, buffer, &Font20, BLACK, WHITE);
 
         // Hum
-        sprintf(buffer, "Hum: %.2f %%", hum);
+        sprintf(buffer, "Hum: %.2f %%", sensor_data_obj.hum);
         Paint_DrawString_EN(10, 55, buffer, &Font20, BLACK, WHITE);
 
         printf("Displayed Page 1: BME688 Data.\n");
@@ -223,15 +339,15 @@ void displayPage(int page) {
         Paint_DrawString_EN(10, 30, "Units: ug/m3", &Font20, BLACK, WHITE);
 
         // PM1.0
-        sprintf(buffer, "PM1.0: %u", pm1_0);
+        sprintf(buffer, "PM1.0: %u", sensor_data_obj.pm2_5);
         Paint_DrawString_EN(10, 55, buffer, &Font20, BLACK, WHITE);
 
         // PM2.5
-        sprintf(buffer, "PM2.5: %u", pm2_5);
+        sprintf(buffer, "PM2.5: %u", sensor_data_obj.pm5);
         Paint_DrawString_EN(10, 80, buffer, &Font20, BLACK, WHITE);
 
         // PM10
-        sprintf(buffer, "PM10: %u", pm10);
+        sprintf(buffer, "PM10: %u", sensor_data_obj.pm10);
         Paint_DrawString_EN(10, 105, buffer, &Font20, BLACK, WHITE);
 
         printf("Displayed Page 2: HM3301 Data.\n");
@@ -241,7 +357,7 @@ void displayPage(int page) {
         Paint_DrawString_EN(10, 5, "PAS CO2", &Font20, BLACK, WHITE);
 
         // CO2
-        sprintf(buffer, "CO2: %u", co2);
+        sprintf(buffer, "CO2: %u", sensor_data_obj.co2);
         Paint_DrawString_EN(10, 30, buffer, &Font20, BLACK, WHITE);
 
         // Unit for CO2
@@ -253,14 +369,14 @@ void displayPage(int page) {
         // Page 4: Settings Page
         Paint_DrawString_EN(10, 5, "Settings", &Font20, BLACK, WHITE);
         
-        // Display current refresh intervall
+        // Display current refresh interval
         sprintf(buffer, "Refresh: ");
         Paint_DrawString_EN(10, 30, buffer, &Font24, BLACK, WHITE);
-        sprintf(buffer, "%d s", refreshInterval/1000);
+        sprintf(buffer, "%d s", refreshInterval / 1000);
         Paint_DrawString_EN(10, 60, buffer, &Font24, BLACK, WHITE);
         
         Paint_DrawString_EN(10, 90, "Press button to", &Font16, BLACK, WHITE);
-        Paint_DrawString_EN(10, 105, "change intervall", &Font16, BLACK, WHITE);
+        Paint_DrawString_EN(10, 105, "change interval", &Font16, BLACK, WHITE);
 
         printf("Displayed Page 4: Settings.\n");
     }
@@ -300,6 +416,7 @@ void gpio_callback(uint gpio, uint32_t events) {
             tast_pressed[gpio_pin] = LONG_PRESSED;
         }
     }
+
 }
 
 void initButtons() {
@@ -333,7 +450,6 @@ void refreshDisplay_Settings_Button(int page) {
 
 
 
-
 int main() {
     stdio_init_all();
 
@@ -344,6 +460,17 @@ int main() {
     initButtons();
     displayHello();
 
+    myGPS gps(UART0_UART_ID, UART0_BAUD_RATE, UART0_TX_PIN, UART0_RX_PIN);
+
+    std::string buffer;
+    double latitude = 0;
+    char nsIndicator = ' ';
+    double longitude = 0;
+    char ewIndicator = ' ';
+    std::string time;
+
+    wifi.init();
+    wifi.scanAndConnect();
 
 
     last_refresh_time = get_absolute_time();
@@ -363,44 +490,80 @@ int main() {
             tast_pressed[1] = NOT_PRESSED;
         }
         
+
+        if (tast_pressed[0] == LONG_PRESSED) {
+            tast_pressed[0] = NOT_PRESSED;
+            wifi.scanAndConnect();
+            refresh_display = true;
+        }
+
+        if (tast_pressed[1] == LONG_PRESSED) {
+            if(wifi.getConnected() == 3) {
+                
+            }
+        }
+            
+
+
+
         // Refresh the display either on button press or after the defined interval
         if (refresh_display || absolute_time_diff_us(last_refresh_time, get_absolute_time()) >= refreshInterval * 1000) {
+
             gpio_set_irq_enabled_with_callback(BUTTON_REFRESH_DISPLAY, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
+    
+            gpio_set_irq_enabled_with_callback(BUTTON_NEXT_PAGE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, false, &gpio_callback);
+
+            if (bme688_sensor.readData(sensor_data_obj.temp, sensor_data_obj.hum, sensor_data_obj.pres, sensor_data_obj.gasRes)) {
+                printf("Updated BME688 data - Temp: %.2f, Hum: %.2f, Pres: %.2f, Gas: %.2f\n", sensor_data_obj.temp, sensor_data_obj.hum, sensor_data_obj.pres, sensor_data_obj.gasRes);
+            }
+
+            if (hm3301_sensor.read(sensor_data_obj.pm2_5, sensor_data_obj.pm5, sensor_data_obj.pm10)) {
+                printf("Updated HM3301 data - PM1.0: %u, PM2.5: %u, PM10: %u\n", sensor_data_obj.pm2_5, sensor_data_obj.pm5, sensor_data_obj.pm10);
+            }
+
+            pas_co2_sensor.read();
+            sensor_data_obj.co2 = pas_co2_sensor.getResult();
+            printf("PAS_CO2 sensor data - CO2: %u ppm\n", sensor_data_obj.co2);
+
+            printf("> sensor_data_obj.temp: %.2f, sensor_data_obj.hum: %.2f, sensor_data_obj.pres: %.2f, gas: %.2f, sensor_data_obj.co2: %u, sensor_data_obj.pm2_5: %u, sensor_data_obj.pm5: %u, sensor_data_obj.pm10: %u\n", sensor_data_obj.temp, sensor_data_obj.hum, sensor_data_obj.pres, sensor_data_obj.gasRes, sensor_data_obj.co2, sensor_data_obj.pm2_5, sensor_data_obj.pm5, sensor_data_obj.pm10);
+
             displayPage(current_page);  // Pass batteryLevel as an argument
             last_refresh_time = get_absolute_time();
             refresh_display = false;
+            batteryLevel = batteryADC.calculateBatteryLevel();
+
+            // Read sensor data and store in flash at each interval
+            
+
+            sensor_data.push_back(sensor_data_obj);
+
             gpio_set_irq_enabled_with_callback(BUTTON_REFRESH_DISPLAY, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
-          
+            gpio_set_irq_enabled_with_callback(BUTTON_NEXT_PAGE, GPIO_IRQ_EDGE_FALL | GPIO_IRQ_EDGE_RISE, true, &gpio_callback);
+
         }
 
         batteryLevel = batteryADC.calculateBatteryLevel();
 
-        // Read sensor data and store in flash at each interval
+        //gps.readLine(buffer, longitude, nsIndicator, latitude, ewIndicator, time);
 
-        if (bme688_sensor.readData(temp, hum, pres, gasRes)) {
-            printf("Updated BME688 data - Temp: %.2f, Hum: %.2f, Pres: %.2f, Gas: %.2f\n", temp, hum, pres, gasRes);
-        }
+        printf("GPS: longitude: %f, latitude: %f, time: %s\n", buffer.c_str(), longitude, latitude, time.c_str());
 
-        if (hm3301_sensor.read(pm1_0, pm2_5, pm10)) {
-            printf("Updated HM3301 data - PM1.0: %u, PM2.5: %u, PM10: %u\n", pm1_0, pm2_5, pm10);
-        }
-
-        pas_co2_sensor.read();
-        co2 = pas_co2_sensor.getResult();
-        printf("PAS_CO2 sensor data - CO2: %u ppm\n", co2);
-
-        printf("> temp: %.2f, hum: %.2f, pres: %.2f, gas: %.2f, co2: %u, pm1_0: %u, pm2_5: %u, pm10: %u\n", temp, hum, pres, gasRes, co2, pm1_0, pm2_5, pm10);
-
-        if(fist_time == true){
-            fist_time = false;
-            displayPage(current_page);  // Pass batteryLevel as an argument
-            last_refresh_time = get_absolute_time();
-            refresh_display = false;
-        }
-
-        //saveToFlash(pm1_0, pm2_5, pm10, temperature, humidity, pressure, gas_resistance, batteryLevel, co2);
+        
 
         sleep_ms(50);  // Short sleep to reduce CPU load in the main loop
+
+        if(fist_time == true){
+                    fist_time = false;
+                    displayPage(current_page);  // Pass batteryLevel as an argument
+                    last_refresh_time = get_absolute_time();
+                    refresh_display = false;
+        }
+
+        printf("wifi status : %d\n", wifi.getConnected());
+        wifi.poll();
+            
+
+    
     }
 
     free(ImageBuffer);
