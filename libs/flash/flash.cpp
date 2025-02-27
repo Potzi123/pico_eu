@@ -5,7 +5,6 @@
 
 // Constants - Using the SDK's macros directly instead of redefining them
 // (removes the redefinition warnings)
-#define SENSOR_DATA_SIZE  sizeof(SensorData)
 #define DATA_COUNT_SIZE   sizeof(uint32_t)
 
 // Default flash target offset (1.8MB from beginning of flash)
@@ -59,6 +58,17 @@ bool Flash::init() {
 }
 
 bool Flash::saveSensorData(const SensorData& data) {
+    // Calculate the address (directly instead of using calculateNextWriteAddress)
+    uint32_t addr = _data_start_address + (_stored_data_count * SENSOR_DATA_SIZE);
+    
+    // Check if this write would cross a page boundary
+    uint32_t page_offset = addr % FLASH_PAGE_SIZE;
+    if (page_offset + sizeof(SensorData) > FLASH_PAGE_SIZE) {
+        // Instead of writing at the end of a page, skip to the beginning of the next page
+        addr = (addr & ~(FLASH_PAGE_SIZE - 1)) + FLASH_PAGE_SIZE;
+        printf("FLASH: Skipping to next page boundary to prevent record corruption\n");
+    }
+    
     // Check if there's space
     if (_stored_data_count >= _max_data_count) {
         return false;
@@ -82,7 +92,7 @@ bool Flash::saveSensorData(const SensorData& data) {
     memset(page_buffer, 0xFF, FLASH_PAGE_SIZE);
     
     // Calculate offset within the page
-    uint32_t page_offset = (_stored_data_count * SENSOR_DATA_SIZE) % FLASH_PAGE_SIZE;
+    page_offset = (_stored_data_count * SENSOR_DATA_SIZE) % FLASH_PAGE_SIZE;
     
     // Serialize data into the page buffer at the correct offset
     serializeSensorData(data, page_buffer + page_offset);
@@ -321,5 +331,36 @@ bool Flash::resetStorage() {
     restore_interrupts(interrupt_state2);
     
     printf("FLASH: Storage reset complete\n");
+    return true;
+}
+
+bool Flash::readSensorDataRecord(uint32_t addr, SensorData &data) {
+    // Check if the record would cross a page boundary
+    uint32_t page_offset = addr % FLASH_PAGE_SIZE;
+    if (page_offset + sizeof(SensorData) > FLASH_PAGE_SIZE) {
+        // Handle cross-page reading - need to read in two parts
+        uint8_t buffer[sizeof(SensorData)];
+        
+        // Read first part from current page
+        uint32_t first_part_size = FLASH_PAGE_SIZE - page_offset;
+        memcpy(buffer, (const void*)addr, first_part_size);
+        
+        // Read second part from next page
+        uint32_t next_page_addr = (addr & ~(FLASH_PAGE_SIZE - 1)) + FLASH_PAGE_SIZE;
+        memcpy(buffer + first_part_size, (const void*)next_page_addr, sizeof(SensorData) - first_part_size);
+        
+        // Copy from buffer to data struct
+        memcpy(&data, buffer, sizeof(SensorData));
+    } else {
+        // Standard single-page read
+        memcpy(&data, (const void*)addr, sizeof(SensorData));
+    }
+    
+    // Verify record validity (optional, adjust as needed)
+    if (data.timestamp == 0xFFFFFFFF || data.co2 == 0xFFFFFFFF) {
+        printf("FLASH: Detected potentially corrupted record at 0x%08x\n", addr);
+        return false;
+    }
+    
     return true;
 }

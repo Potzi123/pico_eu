@@ -1,7 +1,6 @@
-#ifndef _LWIPOPTS_H
-#define _LWIPOPTS_H
+#ifndef _LWIPOPTS_EXAMPLE_COMMONH_H
+#define _LWIPOPTS_EXAMPLE_COMMONH_H
 
-#include "lwipopts_examples_common.h"
 
 // Common settings used in most of the pico_w examples
 // (see https://www.nongnu.org/lwip/2_1_x/group__lwip__opts.html for details)
@@ -88,19 +87,4 @@
 #define SLIP_DEBUG                  LWIP_DBG_OFF
 #define DHCP_DEBUG                  LWIP_DBG_OFF
 
-#undef TCP_WND
-#define TCP_WND  16384
-
-/* Enable ALTCP API */
-#define LWIP_ALTCP               1
-#define LWIP_ALTCP_TLS           1
-#define LWIP_ALTCP_TLS_MBEDTLS   1
-
-/* Increase MEMP settings for ALTCP */
-#define MEMP_NUM_ALTCP_PCB       16
-#define MEMP_NUM_SSL_PCB         16
-
-/* Debug for ALTCP */
-#define ALTCP_MBEDTLS_DEBUG      LWIP_DBG_ON
-
-#endif /* _LWIPOPTS_H */
+#endif /* _LWIPOPTS_EXAMPLE_COMMONH_H */ 

@@ -6,6 +6,9 @@
 #include "hardware/sync.h"
 #include "pico/stdlib.h"
 
+// Add this definition at the top of the file, after the struct definitions
+#define SENSOR_DATA_SIZE  sizeof(SensorData)
+
 // SensorData struct matches the one in pico_eu.cpp
 struct SensorData {
     float temp = 0.0;
@@ -74,6 +77,8 @@ public:
     // Function to erase all data and reset storage
     bool resetStorage();
 
+    bool readSensorDataRecord(uint32_t addr, SensorData &data);
+
 private:
     uint32_t _flash_offset;                // Where to start storing data in flash
     uint32_t _data_count_address;          // Where to store the count of records
@@ -91,6 +96,11 @@ private:
     
     // Deserialize sensor data from a byte array
     SensorData deserializeSensorData(const uint8_t* buffer);
+
+    uint32_t calculateNextWriteAddress() {
+        // Calculate storage address for the next data point
+        return _data_start_address + (_stored_data_count * SENSOR_DATA_SIZE);
+    }
 };
 
 #endif // FLASH_H

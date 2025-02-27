@@ -27,7 +27,7 @@
                                  "\"temp\":5,\"part_2_5\":6,\"part_5\":7,\"part_10\":8}"
 #define TLS_CLIENT_TIMEOUT_SECS  6000
 
-extern bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *server, const char *request, int timeout);
+extern bool run_tls_client_test(unsigned char const* cert, unsigned int cert_len, char const* server, char const* request, int timeout);
 
 int main() {
     stdio_init_all();

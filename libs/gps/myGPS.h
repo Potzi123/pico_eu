@@ -33,6 +33,7 @@
 
 const std::string GNTXT = "$GNTXT";
 const std::string GNGLL = "$GNGLL";
+const std::string GNRMC = "$GNRMC";
 
 const std::string AUTHREQ = "$AUTHREQ";
 const std::string AUTHRES = "$AUTHRES";
@@ -57,7 +58,41 @@ public:
     int readLine(std::string &);
     int readLine(std::string &, double &, char &, double &, char &, std::string &);
     std::string to_string(double, char, double, char, std::string &);
-
+    
+    // Tests GPS connection and returns a status code:
+    // 0 = Good connection with valid NMEA data
+    // 1 = Connected but no NMEA data received
+    // 2 = UART communication error
+    // 3 = Connected with NMEA data but with frame errors
+    // 4 = Connected but baud rate likely incorrect
+    int testConnection();
+    
+    // Returns the number of satellites currently visible to the GPS module
+    int getVisibleSatellites();
+    
+    // Waits for a valid GPS fix with a specified timeout in seconds
+    // Returns true if a fix was obtained, false if timeout occurred
+    bool waitForFix(int timeout_seconds);
+    
+    // Sends hot start command to the GPS module
+    // This resets the receiver but keeps ephemeris data for faster satellite acquisition
+    // Returns true if command was sent successfully
+    bool sendHotStartCommand();
+    
+    // Sends warm start command to the GPS module
+    // This resets the receiver but keeps time, position, almanac, and ephemeris data
+    // Returns true if command was sent successfully
+    bool sendWarmStartCommand();
+    
+    // Sends a cold start command to the GPS module
+    // This fully resets the receiver and clears all navigation data
+    // May help when the receiver is completely stuck or has corrupt data
+    // Returns true if command was sent successfully
+    bool sendColdStartCommand();
+    
+    // Sends a command to the GPS module to specifically enable time messages
+    // This can help ensure time data is being sent by the module
+    bool enableTimeMessages();
 };
 
 

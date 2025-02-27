@@ -42,6 +42,7 @@ public:
     int scanAndConnect();
     int connect(std::string, std::string);
     void disconnect();
+    void emergencyReset();
 };
 
 static int scan_result(void *env, const cyw43_ev_scan_result_t *result);

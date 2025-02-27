@@ -6,6 +6,9 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Enable C++ exceptions
+set(PICO_CXX_ENABLE_EXCEPTIONS 1)
+
 # Initialise pico_sdk from installed location
 # (note this can come from environment, CMake cache etc)
 
@@ -58,10 +61,15 @@ add_executable(pico_eu
     libs/eInk/Fonts/font20.c
     libs/eInk/Fonts/font24.c
     libs/gps/myGPS.cpp
+    libs/https/tls.c  # Re-add the TLS implementation
 )
 
 pico_set_program_name(pico_eu "pico_eu")
 pico_set_program_version(pico_eu "0.1")
+
+# Configure mbedtls and lwip paths
+set(LWIP_DIR ${PICO_SDK_PATH}/lib/lwip)
+set(MBEDTLS_DIR ${PICO_SDK_PATH}/lib/mbedtls)
 
 # Generate PIO header
 pico_generate_pio_header(pico_eu ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
@@ -81,6 +89,9 @@ target_include_directories(pico_eu PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/libs/wifi
     ${CMAKE_CURRENT_LIST_DIR}/libs/flash
     ${CMAKE_CURRENT_LIST_DIR}/libs/eInk
+    ${CMAKE_CURRENT_LIST_DIR}/libs/https  # Add HTTPS include directory
+    ${LWIP_DIR}/src/include  # Add LWIP include directory
+    ${MBEDTLS_DIR}/include  # Add mbedTLS include directory
     ${CMAKE_CURRENT_LIST_DIR}/.. # for common lwipopts or other standard includes
 )
 
@@ -106,6 +117,9 @@ target_link_libraries(pico_eu
     epd_gui_paint 
     epd_fonts 
     pico_flash
+    pico_lwip
+    pico_lwip_mbedtls  # mbedTLS support for LWIP
+    pico_mbedtls       # Add explicit link to mbedTLS
 )
 
 pico_add_extra_outputs(pico_eu)

@@ -186,7 +186,12 @@ static TLS_CLIENT_T* tls_client_init(void) {
     return state;
 }
 
-bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *server, const char *request, int timeout) {
+/* Explicitly use extern "C" for the function definition to ensure correct linkage when called from C++ */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+bool run_tls_client_test(unsigned char const* cert, unsigned int cert_len, char const* server, char const* request, int timeout) {
 
     /* No CA certificate checking */
     tls_config = altcp_tls_create_config_client(cert, cert_len);
@@ -225,3 +230,7 @@ bool run_tls_client_test(const uint8_t *cert, size_t cert_len, const char *serve
     altcp_tls_free_config(tls_config);
     return err == 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
