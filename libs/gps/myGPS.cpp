@@ -286,11 +286,32 @@ int myGPS::readLine(std::string &line) {
             this->ewIndicator = 'C';
         }
         
+        // Skip speed
+        std::getline(iss, token, ',');
+        
+        // Skip course
+        std::getline(iss, token, ',');
+        
+        // Date field (format: ddmmyy)
+        std::getline(iss, token, ',');
+        if (!token.empty() && token.size() >= 6) {
+            this->date = token;  // Store the raw date string
+#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
+            printf("Parsed date (RMC): %s (DD/MM/YY)\n", this->date.c_str());
+#endif
+        } else {
+            // Keep the previous date if nothing valid is received
+#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
+            printf("Empty or invalid date field in RMC data\n");
+#endif
+        }
+        
 #if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
         printf("GPS Fix Status (RMC): %s\n", valid_fix ? "VALID" : "INVALID");
         printf("Long: %f%c\n", this->longitude, this->ewIndicator);
         printf("Lat: %f%c\n", this->latitude, this->nsIndicator);
-        printf("Time: %s\n\n", this->time.c_str());
+        printf("Time: %s\n", this->time.c_str());
+        printf("Date: %s\n\n", this->date.c_str());
 #endif
         
         return valid_fix ? 0 : 2;  // Return 0 for valid fix, 2 for invalid
@@ -309,6 +330,20 @@ int myGPS::readLine(std::string &buffer, double &longitude, char &ewIndicator, d
     latitude = this->latitude;
     nsIndicator = this->nsIndicator;
     time = this->time;
+    
+    return result;
+}
+
+int myGPS::readLine(std::string &buffer, double &longitude, char &ewIndicator, double &latitude, char &nsIndicator, std::string &time, std::string &date) {
+    int result = this->readLine(buffer);
+    
+    // Always copy the current values, even if invalid
+    longitude = this->longitude;
+    ewIndicator = this->ewIndicator;
+    latitude = this->latitude;
+    nsIndicator = this->nsIndicator;
+    time = this->time;
+    date = this->date;
     
     return result;
 }

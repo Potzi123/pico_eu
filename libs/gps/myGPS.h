@@ -51,13 +51,19 @@ private:
     double longitude = 0;
     char ewIndicator = 'C';
     std::string time = "00:00:00";
+    std::string date = "010170"; // Default date (January 1, 1970) in ddmmyy format
     std::string buffer;
 public:
     myGPS(uart_inst_t *, int, int, int);
     void init();
     int readLine(std::string &);
     int readLine(std::string &, double &, char &, double &, char &, std::string &);
+    int readLine(std::string &, double &, char &, double &, char &, std::string &, std::string &);
     std::string to_string(double, char, double, char, std::string &);
+    
+    // Get the current date from GPS in DDMMYY format
+    // Returns empty string if no date is available
+    std::string getDate() { return date; }
     
     // Tests GPS connection and returns a status code:
     // 0 = Good connection with valid NMEA data

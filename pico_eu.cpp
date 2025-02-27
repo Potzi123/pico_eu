@@ -564,24 +564,49 @@ void prepareBatchDataForTransmission(const std::vector<SensorData>& data_vec, ch
         double lon_save = 0, lat_save = 0;
         char ns_save = ' ', ew_save = ' ';
         std::string time_str_save;
+        std::string date_str_save; // Add date string
         
         char timestamp[64];
         
         // Try to get time from GPS for current time reference
-        gps.readLine(gps_line_save, lon_save, ew_save, lat_save, ns_save, time_str_save);
+        gps.readLine(gps_line_save, lon_save, ew_save, lat_save, ns_save, time_str_save, date_str_save);
         
         if (!time_str_save.empty() && time_str_save != "00:00:00") {
             // We have a valid GPS time - parse it
             int hours = 0, minutes = 0, seconds = 0;
             if (sscanf(time_str_save.c_str(), "%d:%d:%d", &hours, &minutes, &seconds) == 3) {
-                // Format the complete ISO timestamp using the current system date and GPS time for hours/minutes/seconds
-                snprintf(timestamp, sizeof(timestamp), 
-                     "%04d-%02d-%02d %02d:%02d:%02d+00:00",
-                     timeinfo->tm_year + 1900, 
-                     timeinfo->tm_mon + 1, 
-                     timeinfo->tm_mday, 
-                     hours, minutes, seconds);
-                printf("Record %zu: Using GPS time for timestamp: %s\n", i, timestamp);
+                // Check if we have a valid date from GPS (format: ddmmyy)
+                if (!date_str_save.empty() && date_str_save.length() >= 6) {
+                    int day = 0, month = 0, year = 0;
+                    if (sscanf(date_str_save.c_str(), "%2d%2d%2d", &day, &month, &year) == 3) {
+                        // Format with GPS date and time
+                        snprintf(timestamp, sizeof(timestamp), 
+                             "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                             2000 + year,  // Convert 2-digit year to 4-digit
+                             month, 
+                             day, 
+                             hours, minutes, seconds);
+                        printf("Using GPS date and time: %s\n", timestamp);
+                    } else {
+                        // Format the complete ISO timestamp using the current system date and GPS time
+                        snprintf(timestamp, sizeof(timestamp), 
+                             "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                             timeinfo->tm_year + 1900, 
+                             timeinfo->tm_mon + 1, 
+                             timeinfo->tm_mday, 
+                             hours, minutes, seconds);
+                        printf("Using system date with GPS time (GPS date parse failed): %s\n", timestamp);
+                    }
+                } else {
+                    // Format with system date and GPS time
+                    snprintf(timestamp, sizeof(timestamp), 
+                         "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                         timeinfo->tm_year + 1900, 
+                         timeinfo->tm_mon + 1, 
+                         timeinfo->tm_mday,
+                         hours, minutes, seconds);
+                    printf("Using system date with GPS time (no GPS date): %s\n", timestamp);
+                }
             } else {
                 // Fallback if parsing fails
                 snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d+00:00",
@@ -591,7 +616,7 @@ void prepareBatchDataForTransmission(const std::vector<SensorData>& data_vec, ch
                      timeinfo->tm_hour, 
                      timeinfo->tm_min, 
                      timeinfo->tm_sec);
-                printf("Record %zu: Using system time (GPS parse failed): %s\n", i, timestamp);
+                printf("Using system time (GPS parse failed): %s\n", timestamp);
             }
         } else {
             // Fallback to system time if GPS time is not available
@@ -602,7 +627,7 @@ void prepareBatchDataForTransmission(const std::vector<SensorData>& data_vec, ch
                  timeinfo->tm_hour, 
                  timeinfo->tm_min, 
                  timeinfo->tm_sec);
-            printf("Record %zu: Using system time (no GPS time): %s\n", i, timestamp);
+            printf("Using system time (no GPS time): %s\n", timestamp);
         }
         
         int record_len = snprintf(current_pos, remaining,
@@ -1010,7 +1035,8 @@ int main() {
         double latitude = 0, longitude = 0;
         char ns_indicator = ' ', ew_indicator = ' ';
         std::string time_str;
-        int gps_status = gps.readLine(gps_line, longitude, ew_indicator, latitude, ns_indicator, time_str);
+        std::string date_str; // New variable to hold the date from GPS
+        int gps_status = gps.readLine(gps_line, longitude, ew_indicator, latitude, ns_indicator, time_str, date_str);
         
         // Update GPS status for display
         fix_status = gps_status;
@@ -1029,11 +1055,24 @@ int main() {
             if (!time_str.empty() && time_str != "00:00:00") {
                 int hours = 0, minutes = 0, seconds = 0;
                 if (sscanf(time_str.c_str(), "%d:%d:%d", &hours, &minutes, &seconds) == 3) {
-                    // Get current system time to keep the date part
+                    // Get current system time to start with
                     time_t now = time(NULL);
                     struct tm *timeinfo = gmtime(&now);
                     
-                    // Update only the time part, keeping the date
+                    // Parse the date if it's available and valid (ddmmyy format)
+                    if (!date_str.empty() && date_str.length() >= 6) {
+                        int day = 0, month = 0, year = 0;
+                        if (sscanf(date_str.c_str(), "%2d%2d%2d", &day, &month, &year) == 3) {
+                            // GPS date is in day/month/year(2-digit) format
+                            timeinfo->tm_mday = day;
+                            timeinfo->tm_mon = month - 1;  // tm_mon is 0-based (0-11)
+                            timeinfo->tm_year = year + 100;  // tm_year is years since 1900, and GPS gives years since 2000
+                            
+                            printf("Using GPS date: %02d/%02d/20%02d\n", day, month, year);
+                        }
+                    }
+                    
+                    // Update the time part
                     timeinfo->tm_hour = hours;
                     timeinfo->tm_min = minutes;
                     timeinfo->tm_sec = seconds;
@@ -1042,8 +1081,12 @@ int main() {
                     time_t new_time = mktime(timeinfo);
                     set_system_time(new_time);
                     
+                    // Debug output with full date and time
                     if (ENABLE_GPS_DEBUG) {
                         printf("Updated system time with GPS time: %s\n", time_str.c_str());
+                        printf("System date and time now: %04d-%02d-%02d %02d:%02d:%02d\n", 
+                            timeinfo->tm_year + 1900, timeinfo->tm_mon + 1, timeinfo->tm_mday,
+                            timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
                     }
                 }
             }
@@ -1131,28 +1174,70 @@ int main() {
                         double lon_save = 0, lat_save = 0;
                         char ns_save = ' ', ew_save = ' ';
                         std::string time_str_save;
+                        std::string date_str_save; // Add date string
                         
                         char timestamp[64];
                         
                         // Try to get time from GPS for current time reference
-                        gps.readLine(gps_line_save, lon_save, ew_save, lat_save, ns_save, time_str_save);
+                        gps.readLine(gps_line_save, lon_save, ew_save, lat_save, ns_save, time_str_save, date_str_save);
                         
                         if (!time_str_save.empty() && time_str_save != "00:00:00") {
                             // We have a valid GPS time - parse it
                             int hours = 0, minutes = 0, seconds = 0;
                             if (sscanf(time_str_save.c_str(), "%d:%d:%d", &hours, &minutes, &seconds) == 3) {
-                                // Simply use the system date with GPS time
-                                // This maintains day consistency while using accurate GPS time
-                                timeinfo->tm_hour = hours;
-                                timeinfo->tm_min = minutes;
-                                timeinfo->tm_sec = seconds;
-                                
-                                // Convert back to unix timestamp - we're already using gmtime so this is in UTC
-                                raw_time = mktime(timeinfo);
-                                printf("Using GPS time for timestamp: %s\n", time_str_save.c_str());
+                                // Check if we have a valid date from GPS (format: ddmmyy)
+                                if (!date_str_save.empty() && date_str_save.length() >= 6) {
+                                    int day = 0, month = 0, year = 0;
+                                    if (sscanf(date_str_save.c_str(), "%2d%2d%2d", &day, &month, &year) == 3) {
+                                        // Format with GPS date and time
+                                        snprintf(timestamp, sizeof(timestamp), 
+                                             "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                                             2000 + year,  // Convert 2-digit year to 4-digit
+                                             month, 
+                                             day, 
+                                             hours, minutes, seconds);
+                                        printf("Using GPS date and time: %s\n", timestamp);
+                                    } else {
+                                        // Format the complete ISO timestamp using the current system date and GPS time
+                                        snprintf(timestamp, sizeof(timestamp), 
+                                             "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                                             timeinfo->tm_year + 1900, 
+                                             timeinfo->tm_mon + 1, 
+                                             timeinfo->tm_mday, 
+                                             hours, minutes, seconds);
+                                        printf("Using system date with GPS time (GPS date parse failed): %s\n", timestamp);
+                                    }
+                                } else {
+                                    // Format with system date and GPS time
+                                    snprintf(timestamp, sizeof(timestamp), 
+                                         "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                                         timeinfo->tm_year + 1900, 
+                                         timeinfo->tm_mon + 1, 
+                                         timeinfo->tm_mday,
+                                         hours, minutes, seconds);
+                                    printf("Using system date with GPS time (no GPS date): %s\n", timestamp);
+                                }
+                            } else {
+                                // Fallback if parsing fails
+                                snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                                     timeinfo->tm_year + 1900, 
+                                     timeinfo->tm_mon + 1, 
+                                     timeinfo->tm_mday,
+                                     timeinfo->tm_hour, 
+                                     timeinfo->tm_min, 
+                                     timeinfo->tm_sec);
+                                printf("Using system time (GPS parse failed): %s\n", timestamp);
                             }
                         } else {
-                            printf("No valid GPS time found, using system time\n");
+                            // Fallback to system time if GPS time is not available
+                            snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02d %02d:%02d:%02d+00:00",
+                                 timeinfo->tm_year + 1900, 
+                                 timeinfo->tm_mon + 1, 
+                                 timeinfo->tm_mday,
+                                 timeinfo->tm_hour, 
+                                 timeinfo->tm_min, 
+                                 timeinfo->tm_sec);
+                            printf("Using system time (no GPS time): %s\n", timestamp);
                         }
                         
                         // Update timestamp for this reading (in seconds)
