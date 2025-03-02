@@ -43,6 +43,7 @@ public:
     int connect(std::string, std::string);
     void disconnect();
     void emergencyReset();
+    bool connectToAP(const char* ssid, const char* password);
 };
 
 static int scan_result(void *env, const cyw43_ev_scan_result_t *result);

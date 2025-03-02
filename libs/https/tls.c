@@ -54,9 +54,46 @@ static err_t tls_client_connected(void *arg, struct altcp_pcb *pcb, err_t err) {
     }
 
     printf("connected to server, sending request\n");
-    err = altcp_write(state->pcb, state->http_request, strlen(state->http_request), TCP_WRITE_FLAG_COPY);
+    
+    // Add safety check for null PCB
+    if (state->pcb == NULL) {
+        printf("ERROR: PCB is null when trying to write data\n");
+        state->error = PICO_ERROR_GENERIC;
+        state->complete = true;
+        return ERR_ABRT;
+    }
+    
+    // Add safety check for http_request
+    if (state->http_request == NULL) {
+        printf("ERROR: HTTP request is null\n");
+        state->error = PICO_ERROR_GENERIC;
+        return tls_client_close(state);
+    }
+    
+    // Add length safety check
+    size_t request_len = strlen(state->http_request);
+    if (request_len == 0 || request_len > 10000) {
+        printf("ERROR: Invalid request length: %u\n", request_len);
+        state->error = PICO_ERROR_GENERIC;
+        return tls_client_close(state);
+    }
+    
+    // Add additional check and logging before writing
+    printf("Sending request of %u bytes\n", request_len);
+    
+    // Use a more robust error handling approach for the write operation
+    err = altcp_write(state->pcb, state->http_request, request_len, TCP_WRITE_FLAG_COPY);
     if (err != ERR_OK) {
-        printf("error writing data, err=%d", err);
+        printf("error writing data, err=%d\n", err);
+        state->error = PICO_ERROR_GENERIC;
+        return tls_client_close(state);
+    }
+    
+    // Explicitly capture the output of altcp_output() to prevent the panic
+    err = altcp_output(state->pcb);
+    if (err != ERR_OK) {
+        printf("error in altcp_output(), err=%d\n", err);
+        state->error = PICO_ERROR_GENERIC;
         return tls_client_close(state);
     }
 
@@ -192,40 +229,131 @@ extern "C" {
 #endif
 
 bool run_tls_client_test(unsigned char const* cert, unsigned int cert_len, char const* server, char const* request, int timeout) {
+    // Add input validation
+    if (server == NULL || request == NULL || timeout <= 0) {
+        printf("Invalid parameters for TLS client test\n");
+        return false;
+    }
 
+    printf("Starting TLS client with server: %s, timeout: %d ms\n", server, timeout);
+    
     /* No CA certificate checking */
     tls_config = altcp_tls_create_config_client(cert, cert_len);
-    assert(tls_config);
+    if (!tls_config) {
+        printf("Failed to create TLS config\n");
+        return false;
+    }
 
     //mbedtls_ssl_conf_authmode(&tls_config->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
 
     TLS_CLIENT_T *state = tls_client_init();
     if (!state) {
+        printf("Failed to initialize TLS client\n");
+        altcp_tls_free_config(tls_config);
         return false;
     }
+    
     state->http_request = request;
     state->timeout = timeout;
+    
     if (!tls_client_open(server, state)) {
+        printf("Failed to open TLS client connection\n");
+        free(state);
+        altcp_tls_free_config(tls_config);
         return false;
     }
-    while(!state->complete) {
+    
+    // Add a timeout for the main loop to prevent infinite waiting
+    uint32_t start_time = to_ms_since_boot(get_absolute_time());
+    uint32_t max_wait_time = timeout + 180000; // Add 3 minutes to the timeout as buffer (increased from 10 seconds)
+    
+    // Error recovery tracking
+    bool had_errors = false;
+    
+    // Add a maximum iteration counter to prevent infinite loops
+    int iteration_count = 0;
+    const int MAX_ITERATIONS = 2000; // Increased from 1000 to allow more iterations for large uploads
+    
+    printf("TLS client entering processing loop with %d max iterations and %lu ms max wait time\n", 
+           MAX_ITERATIONS, (unsigned long)max_wait_time);
+    
+    while(!state->complete && iteration_count < MAX_ITERATIONS) {
+        iteration_count++;
+        
+        // Log every 50 iterations to help with debugging
+        if (iteration_count % 50 == 0) {
+            printf("TLS client still processing after %d iterations\n", iteration_count);
+        }
+        
+        // Check if we're approaching the limit
+        if (iteration_count >= MAX_ITERATIONS * 0.8) {
+            printf("WARNING: Approaching max iterations (%d/%d)\n", iteration_count, MAX_ITERATIONS);
+        }
+        
+        // Check if we've exceeded our max wait time
+        uint32_t elapsed_time = to_ms_since_boot(get_absolute_time()) - start_time;
+        if (elapsed_time > max_wait_time) {
+            printf("TLS client operation timed out after %u ms (limit: %u ms)\n", 
+                   (unsigned int)elapsed_time, (unsigned int)max_wait_time);
+            state->error = PICO_ERROR_TIMEOUT;
+            state->complete = true;
+            break;
+        }
+        
         // the following #ifdef is only here so this same example can be used in multiple modes;
         // you do not need it in your code
 #if PICO_CYW43_ARCH_POLL
         // if you are using pico_cyw43_arch_poll, then you must poll periodically from your
         // main loop (not from a timer) to check for Wi-Fi driver or lwIP work that needs to be done.
-        cyw43_arch_poll();
+        
+        // Safe polling with basic error detection
+        int poll_result = cyw43_arch_poll();
+        if (poll_result < 0) {
+            printf("Warning: cyw43_arch_poll returned error %d\n", poll_result);
+            had_errors = true;
+            sleep_ms(100); // Short sleep to avoid busy-loop on repeated errors
+            continue;
+        }
+        
         // you can poll as often as you like, however if you have nothing else to do you can
         // choose to sleep until either a specified time, or cyw43_arch_poll() has work to do:
-        cyw43_arch_wait_for_work_until(make_timeout_time_ms(1000));
+        
+        // Use a shorter wait time to avoid getting stuck
+        absolute_time_t timeout_time = make_timeout_time_ms(100); // Reduced to 100ms from 1000ms
+        bool wait_succeeded = cyw43_arch_wait_for_work_until(timeout_time);
+        if (!wait_succeeded) {
+            printf("Warning: cyw43_arch_wait_for_work_until failed or timed out\n");
+            had_errors = true;
+            
+            // If we're getting repeated errors, count it toward our iteration limit faster
+            if (iteration_count > 100) {
+                iteration_count += 9; // Make 10 iterations count as 1 (this one + 9 more)
+            }
+            
+            sleep_ms(50); // Very short sleep to recover
+            continue;
+        }
 #else
         // if you are not using pico_cyw43_arch_poll, then WiFI driver and lwIP work
         // is done via interrupt in the background. This sleep is just an example of some (blocking)
         // work you might be doing.
-        sleep_ms(1000);
+        sleep_ms(100); // Reduced from 1000ms to avoid long waits
 #endif
     }
+    
+    // Check if we hit the iteration limit
+    if (iteration_count >= MAX_ITERATIONS) {
+        printf("ERROR: TLS client loop exceeded maximum iterations (%d). Aborting to prevent infinite loop.\n", MAX_ITERATIONS);
+        state->error = PICO_ERROR_TIMEOUT;
+    }
+    
+    if (had_errors) {
+        printf("TLS client recovered from potential error conditions\n");
+    }
+    
     int err = state->error;
+    printf("TLS client completed with %s (error code: %d, iterations: %d)\n", 
+           err == 0 ? "success" : "error", err, iteration_count);
     free(state);
     altcp_tls_free_config(tls_config);
     return err == 0;

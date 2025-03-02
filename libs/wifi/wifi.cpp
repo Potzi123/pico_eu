@@ -22,11 +22,39 @@ void myWIFI::poll() {
 }
 
 int myWIFI::init() {
-    if(cyw43_arch_init_with_country(CYW43_COUNTRY_AUSTRIA)) {
-        printf("Failed to initialise");
+    printf("[WIFI DEBUG] Starting WiFi initialization\n");
+    
+    // Check if WiFi is already initialized
+    if (cyw43_is_initialized(&cyw43_state)) {
+        printf("[WIFI DEBUG] WiFi already initialized, no need to initialize again\n");
+        return 0;
+    }
+    
+    printf("[WIFI DEBUG] Calling cyw43_arch_init_with_country(CYW43_COUNTRY_AUSTRIA)...\n");
+    int ret = cyw43_arch_init_with_country(CYW43_COUNTRY_AUSTRIA);
+    
+    if(ret) {
+        printf("[WIFI ERROR] Failed to initialize WiFi with error code: %d\n", ret);
+        
+        // Check for common error codes
+        if (ret == -1) {
+            printf("[WIFI ERROR] Generic initialization failure. Check hardware connection.\n");
+        } else if (ret == -2) {
+            printf("[WIFI ERROR] Resource allocation failure. System may be low on memory.\n");
+        } else {
+            printf("[WIFI ERROR] Unknown error code.\n");
+        }
         return 1;
     }
-    printf("WiFi initialised");
+    
+    printf("[WIFI DEBUG] WiFi driver initialized successfully\n");
+    
+    // Verify initialization status
+    if (!cyw43_is_initialized(&cyw43_state)) {
+        printf("[WIFI WARNING] cyw43_is_initialized() reports not initialized after successful init\n");
+        printf("[WIFI WARNING] This may indicate a driver state inconsistency\n");
+    }
+    
     return 0;
 }
 
@@ -69,6 +97,12 @@ int myWIFI::scanAndConnect() {
         printf("[WIFI DEBUG] Starting WiFi scan (attempt %d/%d)...\n", 
                scan_start_attempts + 1, MAX_SCAN_START_ATTEMPTS);
         
+        // Make sure to poll in case previous operations are still pending
+        for (int i = 0; i < 10; i++) {
+            cyw43_arch_poll();
+            sleep_ms(10);
+        }
+        
         scan_start_result = cyw43_wifi_scan(&cyw43_state, &scan_options, nullptr, scan_result);
         
         if (scan_start_result == 0) {
@@ -77,6 +111,21 @@ int myWIFI::scanAndConnect() {
         }
         
         printf("[WIFI ERROR] Could not start WiFi Scan! Error: %d\n", scan_start_result);
+        
+        // Check for specific error cases
+        if (scan_start_result == -1) {
+            printf("[WIFI ERROR] Generic scan error. WiFi may be busy or in incorrect state.\n");
+        } else if (scan_start_result == -5) {
+            printf("[WIFI ERROR] Scan already in progress. Waiting for it to complete...\n");
+            // Wait for existing scan to complete
+            absolute_time_t wait_timeout = make_timeout_time_ms(5000);
+            while (cyw43_wifi_scan_active(&cyw43_state) && 
+                   !absolute_time_diff_us(get_absolute_time(), wait_timeout) <= 0) {
+                cyw43_arch_poll();
+                sleep_ms(50);
+            }
+        }
+        
         scan_start_attempts++;
         
         if (scan_start_attempts < MAX_SCAN_START_ATTEMPTS) {
@@ -330,4 +379,68 @@ static int scan_result(void *env, const cyw43_ev_scan_result_t *result) {
                result->auth_mode);
     }*/
     return 0;
+}
+
+bool myWIFI::connectToAP(const char* ssid, const char* password) {
+    printf("[WIFI DEBUG] Attempting to connect to SSID: %s\n", ssid);
+    
+    // Check if WiFi is initialized by checking if cyw43 is initialized
+    if (!cyw43_is_initialized(&cyw43_state)) {
+        printf("[WIFI ERROR] Cannot connect to AP: WiFi not initialized\n");
+        return false;
+    }
+    
+    // Disconnect if already connected to something else
+    if (cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_JOIN) {
+        printf("[WIFI DEBUG] Already connected to a network. Disconnecting first...\n");
+        cyw43_wifi_leave(&cyw43_state, CYW43_ITF_STA);
+        sleep_ms(500); // Give some time for disconnection
+    }
+    
+    // Try to connect multiple times
+    int connect_attempts = 0;
+    const int MAX_CONNECT_ATTEMPTS = 3;
+    int connect_result = -1;
+    
+    while (connect_attempts < MAX_CONNECT_ATTEMPTS) {
+        printf("[WIFI DEBUG] Connection attempt %d/%d to SSID: %s\n", 
+               connect_attempts + 1, MAX_CONNECT_ATTEMPTS, ssid);
+        
+        // Make sure to poll the WiFi driver before attempting connection
+        for (int i = 0; i < 10; i++) {
+            cyw43_arch_poll();
+            sleep_ms(10);
+        }
+        
+        connect_result = cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 10000);
+        
+        if (connect_result == 0) {
+            printf("[WIFI DEBUG] Successfully connected to %s\n", ssid);
+            this->connected = CYW43_LINK_UP;
+            return true;
+        }
+        
+        // Check for specific error codes
+        printf("[WIFI ERROR] Failed to connect to %s. Error: %d\n", ssid, connect_result);
+        
+        if (connect_result == -2) {
+            printf("[WIFI ERROR] Authentication failed! Check SSID and password.\n");
+            break; // No point retrying with wrong credentials
+        } else if (connect_result == -110) {
+            printf("[WIFI ERROR] Connection timeout. AP may be out of range.\n");
+        } else if (connect_result == -113) {
+            printf("[WIFI ERROR] No route to host. AP may be unreachable.\n");
+        }
+        
+        connect_attempts++;
+        
+        if (connect_attempts < MAX_CONNECT_ATTEMPTS) {
+            printf("[WIFI DEBUG] Retrying connection in 2 seconds...\n");
+            sleep_ms(2000);
+        }
+    }
+    
+    printf("[WIFI ERROR] Failed to connect after %d attempts\n", MAX_CONNECT_ATTEMPTS);
+    this->connected = CYW43_LINK_DOWN;
+    return false;
 }

@@ -53,6 +53,18 @@ private:
     std::string time = "00:00:00";
     std::string date = "010170"; // Default date (January 1, 1970) in ddmmyy format
     std::string buffer;
+    
+    // Fake GPS data flag and simulated coordinates
+    bool use_fake_data = false;
+    double fake_latitude = 48.20662016908546;    // Default fake latitude
+    double fake_longitude = 15.617513602109687;  // Default fake longitude
+    
+    // For simulating GPS acquisition
+    uint32_t fake_startup_time = 0;
+    bool fake_fix_acquired = false;
+    int fake_satellites = 0;
+    int fake_acquisition_time_ms = 5000; // Time to acquire fix (5 seconds)
+    
 public:
     myGPS(uart_inst_t *, int, int, int);
     void init();
@@ -60,6 +72,14 @@ public:
     int readLine(std::string &, double &, char &, double &, char &, std::string &);
     int readLine(std::string &, double &, char &, double &, char &, std::string &, std::string &);
     std::string to_string(double, char, double, char, std::string &);
+    
+    // Fake GPS data methods
+    void enableFakeGPS(bool enable) { use_fake_data = enable; }
+    bool isFakeGPSEnabled() const { return use_fake_data; }
+    void setFakeCoordinates(double lat, double lon) { 
+        fake_latitude = lat; 
+        fake_longitude = lon; 
+    }
     
     // Get the current date from GPS in DDMMYY format
     // Returns empty string if no date is available

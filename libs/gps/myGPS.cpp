@@ -6,7 +6,7 @@
 #include "stdlib.h"
 #include "libs/gps/myGPS.h"
 #include <hardware/gpio.h>
-
+#include <time.h>  // Add for time functions
 
 myGPS::myGPS(uart_inst_t *uart_id, int baud_rate, int tx_pin, int rx_pin) {
     this->uart_id = uart_id;
@@ -322,22 +322,84 @@ int myGPS::readLine(std::string &line) {
 }
 
 int myGPS::readLine(std::string &buffer, double &longitude, char &ewIndicator, double &latitude, char &nsIndicator, std::string &time) {
-    int result = this->readLine(buffer);
+    // If fake GPS data is enabled, return simulated data
+    if (use_fake_data) {
+        // Generate fake GPS data
+        buffer = "$GNGLL,4812.3972,N,1537.0508,E,120000.000,A,*XX";
+        longitude = fake_longitude;
+        latitude = fake_latitude;
+        ewIndicator = (fake_longitude >= 0) ? 'E' : 'W';
+        nsIndicator = (fake_latitude >= 0) ? 'N' : 'S';
+        
+        // Get current time for the fake data
+        time_t gps_timestamp = ::time(NULL);
+        struct tm *timeinfo = gmtime(&gps_timestamp);
+        char time_buffer[9];
+        strftime(time_buffer, sizeof(time_buffer), "%H:%M:%S", timeinfo);
+        time = time_buffer;
+        
+        // Return 0 to indicate successful read with valid fix
+        return 0;
+    }
     
-    // Always copy the current values, even if invalid
-    longitude = this->longitude;
-    ewIndicator = this->ewIndicator;
-    latitude = this->latitude;
-    nsIndicator = this->nsIndicator;
-    time = this->time;
-    
-    return result;
+    // If not using fake data, use the original implementation
+    return readLine(buffer);
 }
 
 int myGPS::readLine(std::string &buffer, double &longitude, char &ewIndicator, double &latitude, char &nsIndicator, std::string &time, std::string &date) {
-    int result = this->readLine(buffer);
+    if (use_fake_data) {
+        // Generate current timestamp in HHMMSS format
+        time_t timestamp = ::time(NULL);
+        struct tm *timeinfo = gmtime(&timestamp);
+        char time_buffer[7];
+        sprintf(time_buffer, "%02d%02d%02d", timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        time = time_buffer;
+        
+        // Format date in DDMMYY format
+        char date_buffer[7];
+        sprintf(date_buffer, "%02d%02d%02d", timeinfo->tm_mday, timeinfo->tm_mon + 1, timeinfo->tm_year % 100);
+        date = date_buffer;
+        
+        // Add small random variations to simulate GPS accuracy fluctuations
+        // Use time as seed for randomization to get different values each second
+        srand(timestamp);
+        double random_lat_offset = ((rand() % 100) - 50) * 0.000005;
+        double random_lon_offset = ((rand() % 100) - 50) * 0.000005;
+        
+        latitude = fake_latitude + random_lat_offset;
+        longitude = fake_longitude + random_lon_offset;
+        
+        // Set indicators (North/East for Vienna area)
+        nsIndicator = (latitude >= 0) ? 'N' : 'S';
+        ewIndicator = (longitude >= 0) ? 'E' : 'W';
+        
+        // Simulate a valid NMEA sentence
+        char nmea_buffer[256];
+        sprintf(nmea_buffer, "$GNRMC,%s.000,A,%02d%07.4f,%c,%03d%07.4f,%c,0.00,0.00,%s,,,A",
+                time.c_str(),
+                (int)latitude, (latitude - (int)latitude) * 60.0, nsIndicator,
+                (int)longitude, (longitude - (int)longitude) * 60.0, ewIndicator,
+                date.c_str());
+        
+        buffer = nmea_buffer;
+        
+        // Debug info about fake GPS data - using a timer to reduce spam
+        static uint32_t last_print_time = 0;
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        
+        if (now - last_print_time > 5000) { // Print only every 5 seconds
+            printf("FAKE GPS: Position: %f,%c %f,%c (random variation)\n", 
+                  latitude, nsIndicator, longitude, ewIndicator);
+            last_print_time = now;
+        }
+        
+        return 0; // Success
+    }
     
-    // Always copy the current values, even if invalid
+    // Call the simpler readLine method first
+    int result = readLine(buffer);
+    
+    // Return longitude, latitude, indicators and time from class members
     longitude = this->longitude;
     ewIndicator = this->ewIndicator;
     latitude = this->latitude;
@@ -370,6 +432,14 @@ std::string myGPS::to_string(double latitude, char nsIndicator, double longitude
 }
 
 int myGPS::testConnection() {
+    if (use_fake_data) {
+        // If in fake mode, always return good connection status
+        printf("FAKE GPS: Connection test - simulating good connection\n");
+        return 0; // Good connection with valid NMEA data
+    }
+    
+    // Original implementation continues below
+    // Attempt to read from the module with a timeout
     printf("Testing GPS connection...\n");
     
     // First, check if UART is configured properly
@@ -485,6 +555,11 @@ int myGPS::testConnection() {
 }
 
 int myGPS::getVisibleSatellites() {
+    if (use_fake_data) {
+        return fake_satellites;
+    }
+    
+    // Original implementation continues below
     // Attempt to read from the GPS module for up to 2 seconds
     absolute_time_t timeout = make_timeout_time_ms(2000);
     int satellite_count = 0;
@@ -574,6 +649,41 @@ int myGPS::getVisibleSatellites() {
 
 // Add a helper method to assist with getting a position fix
 bool myGPS::waitForFix(int timeout_seconds) {
+    if (use_fake_data) {
+        // If this is the first call, initialize the startup time
+        if (fake_startup_time == 0) {
+            printf("FAKE GPS: Starting acquisition simulation\n");
+            fake_startup_time = to_ms_since_boot(get_absolute_time());
+            fake_fix_acquired = false;
+            fake_satellites = 0;
+            return false; // First call always returns no fix
+        }
+        
+        // Simulate acquisition delay with gradual satellite discovery
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - fake_startup_time;
+        
+        // Simulate finding satellites gradually
+        if (elapsed < fake_acquisition_time_ms) {
+            // Gradually increase satellites from 0 to 7 during acquisition
+            fake_satellites = (7 * elapsed) / fake_acquisition_time_ms;
+            printf("FAKE GPS: Acquiring satellites... %d found (%d ms elapsed)\n", 
+                   fake_satellites, elapsed);
+            
+            // No fix yet
+            fake_fix_acquired = false;
+            return false;
+        } else {
+            // After acquisition time, we have a fix
+            if (!fake_fix_acquired) {
+                printf("FAKE GPS: Fix acquired after %d ms\n", elapsed);
+                fake_fix_acquired = true;
+                fake_satellites = 7 + (rand() % 4); // 7-10 satellites when fixed
+            }
+            return true;
+        }
+    }
+    
+    // Real GPS implementation continues below
     printf("Waiting for GPS fix (timeout: %d seconds)...\n", timeout_seconds);
     
     absolute_time_t timeout = make_timeout_time_ms(timeout_seconds * 1000);
