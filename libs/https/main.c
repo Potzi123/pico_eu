@@ -21,7 +21,7 @@
                                  "Content-Length: 203\r\n" \
                                  "Connection: close\r\n" \
                                  "\r\n" \
-                                 "{\"token\":\"86ea63a5-4ea6-4bd1-88f0-bb370970dd16\"," \
+                                 "{\"token\":\"REPLACE_TOKEN\"," \
                                  "\"measured_at\":\"2024-10-23T12:28:02.379+00:00\"," \
                                  "\"lat\":48.2072620612573,\"long\":15.61750700948781,\"co2\":3,\"hum\":4," \
                                  "\"temp\":5,\"part_2_5\":6,\"part_5\":7,\"part_10\":8}"

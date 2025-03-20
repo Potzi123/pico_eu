@@ -24,7 +24,7 @@
 #define USE_WATCHDOG
 
 // Set to 1 to enable fake GPS data (for indoor testing)
-#define USE_FAKE_GPS 1
+#define USE_FAKE_GPS 0
 
 // Debug helper defines to identify where code is getting stuck
 #define DEBUG_POINT(name) printf("DEBUG [%8lu ms]: %s\n", to_ms_since_boot(get_absolute_time()), name)
@@ -115,7 +115,7 @@ void set_system_time(time_t new_time) {
                                  "Content-Length: 320\r\n" \
                                  "Connection: close\r\n" \
                                  "\r\n" \
-                                 "{\"token\":\"86ea63a5-4ea6-4bd1-88f0-bb370970dd16\"," \
+                                 "{\"token\":\"REPLACE_TOKEN\"," \
                                  "\"measurements\":[" \
                                  "{\"measured_at\":\"2024-11-08 12:12:12.121+00\"," \
                                  "\"lat\":48.20662016908546,\"long\":15.617513602109687,\"co2\":1656,\"hum\":32.8," \
@@ -842,7 +842,7 @@ void refreshDisplay_Settings_Button(int page) {
 // Add this function to format the data as JSON
 void prepareDataForTransmission(const SensorData& data, char* json_buffer, size_t buffer_size) {
     snprintf(json_buffer, buffer_size,
-             "{\"token\":\"86ea63a5-4ea6-4bd1-88f0-bb370970dd16\","
+             "{\"token\":\"REPLACE_TOKEN\","
              "\"measured_at\":\"%u\","  // Use timestamp
              "\"lat\":%.7f,\"long\":%.7f,\"co2\":%u,\"hum\":%.2f,"
              "\"temp\":%.2f,\"part_2_5\":%u,\"part_5\":%u,\"part_10\":%u}",
@@ -880,7 +880,7 @@ void prepareBatchDataForTransmission(const std::vector<SensorData>& data_vec, ch
     
     // Start with the opening part of the JSON
     int written = snprintf(json_buffer, buffer_size,
-                         "{\"token\":\"86ea63a5-4ea6-4bd1-88f0-bb370970dd16\","
+                         "{\"token\":\"REPLACE_TOKEN\","
                          "\"measurements\":[");
     
     size_t remaining = buffer_size - written;
