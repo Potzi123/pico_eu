@@ -78,6 +78,9 @@ public:
     // Load a single sensor data record
     SensorData loadSensorData(size_t index);
     
+    // Load all stored sensor data at once
+    std::vector<SensorData> loadAllSensorData();
+    
     // Get count of stored records
     uint32_t getStoredCount();
     

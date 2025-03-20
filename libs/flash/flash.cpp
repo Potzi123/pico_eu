@@ -510,21 +510,27 @@ SensorData Flash::loadSensorData(size_t index) {
     return result;
 }
 
-std::vector<SensorData> Flash::loadSensorData() {
+/**
+ * Load all sensor data records from flash storage
+ * 
+ * @return Vector containing all valid sensor data records
+ */
+std::vector<SensorData> Flash::loadAllSensorData() {
     std::vector<SensorData> result;
     
-    // Return empty vector if no data
-    if (_stored_data_count == 0) {
-        printf("FLASH: No records found to load\n");
+    // Return empty vector if no data or flash disabled
+    if (!_flash_enabled || getStoredCount() == 0) {
+        printf("FLASH: No records found to load or flash disabled\n");
         return result;
     }
     
     // Reserve space for all records
-    result.reserve(_stored_data_count);
-    printf("FLASH: Loading %lu records from flash\n", _stored_data_count);
+    uint32_t count = getStoredCount();
+    result.reserve(count);
+    printf("FLASH: Loading %lu records from flash\n", count);
     
     // Read each record using the single-record method
-    for (size_t i = 0; i < _stored_data_count; i++) {
+    for (size_t i = 0; i < count; i++) {
         SensorData data = loadSensorData(i);
         
         // Only add valid records to the vector (check timestamp as a validity indicator)
@@ -536,7 +542,7 @@ std::vector<SensorData> Flash::loadSensorData() {
     }
     
     printf("FLASH: Successfully loaded %lu valid records (out of %lu total)\n", 
-           result.size(), _stored_data_count);
+           result.size(), count);
     return result;
 }
 

@@ -25,21 +25,54 @@ void myGPS::init() {
 /** /@return 0 on sucess \n 1 on not sucess
  */
 int myGPS::readLine(std::string &line) {
+    // Add absolute master timeout to prevent hangs and deadlocks
+    absolute_time_t master_timeout = make_timeout_time_ms(1000); // 1 second absolute maximum
+    bool master_timeout_reached = false;
+    
     if(!uart_is_readable(this->uart_id)) {
         return 1;
     }
 
-    // Add timeout mechanism
-    absolute_time_t timeout_time = make_timeout_time_ms(2000); // 2 second timeout
+    // Add timeout mechanism - reduced to prevent long waits
+    absolute_time_t timeout_time = make_timeout_time_ms(500); // Reduced from 2000ms to 500ms
     
     bool valid_sentence_found = false;
     std::string sentence_type;
     
+    // Safety counter to prevent infinite loops
+    int loop_counter = 0;
+    const int MAX_LOOP_ITERATIONS = 500; // Absolute maximum loops
+    
     // Keep trying until we find a valid sentence or timeout
     while (!valid_sentence_found && !absolute_time_diff_us(get_absolute_time(), timeout_time) <= 0) {
+        // Break if the master timeout is reached or we've looped too many times
+        if (absolute_time_diff_us(get_absolute_time(), master_timeout) <= 0 || loop_counter++ > MAX_LOOP_ITERATIONS) {
+            if (loop_counter > MAX_LOOP_ITERATIONS) {
+                printf("GPS loop safety limit reached (%d iterations), breaking\n", loop_counter);
+            } else {
+                printf("GPS master timeout reached, breaking\n");
+            }
+            master_timeout_reached = true;
+            break;
+        }
+        
         this->buffer = "";
         // Start with an empty buffer
+        
+        // Inner loop safety counter
+        int inner_loop_counter = 0;
+        const int MAX_INNER_LOOP_ITERATIONS = 300; // Maximum inner loops
+        
         while(this->buffer.empty() || this->buffer.back() != '\n') {
+            // Break if master timeout is reached or we've looped too many times in the inner loop
+            if (absolute_time_diff_us(get_absolute_time(), master_timeout) <= 0 || inner_loop_counter++ > MAX_INNER_LOOP_ITERATIONS) {
+                if (inner_loop_counter > MAX_INNER_LOOP_ITERATIONS) {
+                    printf("GPS inner loop safety limit reached (%d iterations), breaking\n", inner_loop_counter);
+                }
+                master_timeout_reached = true;
+                break;
+            }
+            
             if(uart_is_readable(this->uart_id)) {
                 this->buffer += uart_getc(this->uart_id);
             } else {
@@ -56,6 +89,11 @@ int myGPS::readLine(std::string &line) {
                 this->buffer = "";
                 break;
             }
+        }
+        
+        // Break outer loop if master timeout was reached in inner loop
+        if (master_timeout_reached) {
+            break;
         }
         
         if(buffer.empty()) {
@@ -81,6 +119,12 @@ int myGPS::readLine(std::string &line) {
             valid_sentence_found = true;
             sentence_type = "GLL";
         }
+    }
+    
+    // If we exited due to master timeout or loop limit, return immediately
+    if (master_timeout_reached) {
+        printf("GPS readLine aborted due to timeout or iteration limit\n");
+        return 1;
     }
     
     // If we didn't find a valid sentence before timeout
@@ -396,8 +440,27 @@ int myGPS::readLine(std::string &buffer, double &longitude, char &ewIndicator, d
         return 0; // Success
     }
     
-    // Call the simpler readLine method first
+    // For real GPS, use a strict timeout to prevent blocking
+    // Reading with all parameters to get the data
+    bool use_safe_values = true;
+    uint32_t start_time = to_ms_since_boot(get_absolute_time());
+    
+    // Call the simpler readLine method first - with 1 second max timeout
     int result = readLine(buffer);
+    
+    // Calculate time spent in GPS read
+    uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - start_time;
+    if (elapsed > 500) {
+        printf("WARNING: GPS read took %lu ms (expected <500ms)\n", elapsed);
+    }
+    
+    if (result == 0) {
+        // If we got good data, use it
+        use_safe_values = false;
+    } else {
+        // If real read failed, use last known values for safety
+        printf("GPS read failed or timed out, using last known values\n");
+    }
     
     // Return longitude, latitude, indicators and time from class members
     longitude = this->longitude;
