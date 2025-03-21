@@ -115,7 +115,7 @@ void set_system_time(time_t new_time) {
                                  "Content-Length: 320\r\n" \
                                  "Connection: close\r\n" \
                                  "\r\n" \
-                                 "{\"token\":\"REPLACE_TOKEN\"," \
+                                 "{\"token\":\"REPLACE_a6805463-2aff-4344-8dfa-6731b16f9154\"," \
                                  "\"measurements\":[" \
                                  "{\"measured_at\":\"2024-11-08 12:12:12.121+00\"," \
                                  "\"lat\":48.20662016908546,\"long\":15.617513602109687,\"co2\":1656,\"hum\":32.8," \
@@ -483,59 +483,111 @@ void displayGPSStatus(absolute_time_t gps_start_time, int fix_status, int satell
     if (is_fake_gps) {
         Paint_DrawString_EN(10, 50, "Mode: SIMULATED", &Font16, BLACK, WHITE);
     } else {
-        // Show time since GPS start
+        // Show time since GPS start - using a more detailed format
         uint32_t seconds_since_start = to_ms_since_boot(get_absolute_time()) / 1000 - to_ms_since_boot(gps_start_time) / 1000;
-        sprintf(buffer, "Time: %d min %d sec", seconds_since_start / 60, seconds_since_start % 60);
+        
+        // Convert to hours:minutes:seconds for clearer display
+        int hours = seconds_since_start / 3600;
+        int minutes = (seconds_since_start % 3600) / 60;
+        int seconds = seconds_since_start % 60;
+        
+        if (hours > 0) {
+            sprintf(buffer, "Time: %dh %dm %ds", hours, minutes, seconds);
+        } else {
+            sprintf(buffer, "Time: %dm %ds", minutes, seconds);
+        }
         Paint_DrawString_EN(10, 50, buffer, &Font16, BLACK, WHITE);
     }
     
-    // Show fix status
+    // Make the fix status more prominent - larger font and better contrast
     if (fix_status == 0) {
-        Paint_DrawString_EN(10, 70, "Fix: VALID", &Font16, BLACK, WHITE);
+        // Draw a filled black rectangle to create a good contrast background
+        Paint_DrawRectangle(10, 70, 200, 95, BLACK, DOT_PIXEL_1X1, DRAW_FILL_FULL);
+        // Draw "VALID FIX" text in white on black background for high visibility
+        Paint_DrawString_EN(25, 75, "FIX: VALID", &Font16, WHITE, BLACK);
+        // Add a checkmark or OK symbol
+        Paint_DrawString_EN(145, 75, "✓", &Font16, WHITE, BLACK);
     } else {
-        Paint_DrawString_EN(10, 70, "Fix: waiting...", &Font16, BLACK, WHITE);
+        // Draw a highlighted "SEARCHING" status with animated effect
+        Paint_DrawRectangle(10, 70, 200, 95, BLACK, DOT_PIXEL_1X1, DRAW_FILL_EMPTY);
+        
+        // Get animation frame based on current time (0-3)
+        uint32_t animation_frame = (to_ms_since_boot(get_absolute_time()) / 500) % 4;
+        char* search_text;
+        
+        // Animated searching text with dots
+        switch(animation_frame) {
+            case 0:
+                search_text = "SEARCHING";
+                break;
+            case 1:
+                search_text = "SEARCHING.";
+                break;
+            case 2:
+                search_text = "SEARCHING..";
+                break;
+            case 3:
+                search_text = "SEARCHING...";
+                break;
+        }
+        
+        Paint_DrawString_EN(25, 75, search_text, &Font16, BLACK, WHITE);
     }
     
-    // Show satellites visible
+    // Show satellites visible with enhanced information
     sprintf(buffer, "Satellites: %d", satellites_visible);
-    Paint_DrawString_EN(10, 90, buffer, &Font16, BLACK, WHITE);
+    Paint_DrawString_EN(10, 100, buffer, &Font16, BLACK, WHITE);
     
-    // Instructions - adjust depending on GPS mode
-    if (is_fake_gps) {
-        Paint_DrawString_EN(10, 110, "Indoor Testing Mode", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 125, "Using simulated GPS", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 140, "coordinates for", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 155, "development testing", &Font12, BLACK, WHITE);
-    } else {
-        Paint_DrawString_EN(10, 110, "For best results:", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 125, "- Go outdoors", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 140, "- Clear sky view", &Font12, BLACK, WHITE);
-        Paint_DrawString_EN(10, 155, "- Wait 5+ minutes", &Font12, BLACK, WHITE);
+    // Add visual satellite strength indicator
+    int x_pos = 130;
+    for (int i = 0; i < satellites_visible && i < 8; i++) {
+        // Draw satellite bars with increasing height
+        int bar_height = 3 + (i % 4) * 2;
+        Paint_DrawRectangle(x_pos + i*4, 100 + (8 - bar_height), 
+                            x_pos + i*4 + 2, 108, 
+                            BLACK, DOT_PIXEL_1X1, DRAW_FILL_FULL);
     }
     
-    // If fast refresh is enabled, use partial refresh with periodic full refresh
+    // Add message about data collection requiring a fix
+    if (fix_status != 0 && !is_fake_gps) {
+        Paint_DrawString_EN(10, 120, "Need valid fix to", &Font12, BLACK, WHITE);
+        Paint_DrawString_EN(10, 135, "collect sensor data", &Font12, BLACK, WHITE);
+        
+        // Add a tip about improving GPS reception
+        Paint_DrawString_EN(10, 155, "For faster fix:", &Font12, BLACK, WHITE);
+        Paint_DrawString_EN(10, 170, "Move to open sky area", &Font12, BLACK, WHITE);
+    } else {
+        // Show ready for data collection
+        Paint_DrawString_EN(10, 120, "Ready for data", &Font12, BLACK, WHITE);
+        Paint_DrawString_EN(10, 135, "collection", &Font12, BLACK, WHITE);
+        
+        if (!is_fake_gps) {
+            // Show GPS quality info
+            Paint_DrawString_EN(10, 155, "GPS signal good", &Font12, BLACK, WHITE);
+            Paint_DrawString_EN(10, 170, "Data will be collected", &Font12, BLACK, WHITE);
+        } else {
+            Paint_DrawString_EN(10, 155, "Using simulated GPS", &Font12, BLACK, WHITE);
+            Paint_DrawString_EN(10, 170, "for testing purposes", &Font12, BLACK, WHITE);
+        }
+    }
+    
+    // Use appropriate refresh method
     if (fast_refresh_enabled) {
         refresh_counter++;
         
         // Every 10 refreshes, do a full refresh to clear any artifacts
         if (refresh_counter >= 10 || !base_image_set) {
-            printf("Performing full refresh to clear artifacts (counter=%d)\n", refresh_counter);
             EPD_1IN54_V2_Display(ImageBuffer);
             base_image_set = false;
             refresh_counter = 0;
-            sleep_ms(100);  // Give a little more time for full refresh
+            sleep_ms(100);
         } else if (!base_image_set) {
-            // First set the base image
-            printf("Setting base image for partial refresh\n");
             EPD_1IN54_V2_DisplayPartBaseImage(ImageBuffer);
             base_image_set = true;
         } else {
-            // Then use partial refresh for updates
-            printf("Using partial refresh (update %d/10)\n", refresh_counter);
             EPD_1IN54_V2_DisplayPart(ImageBuffer);
         }
     } else {
-        // Use standard full refresh always
         EPD_1IN54_V2_Display(ImageBuffer);
     }
 }
@@ -794,6 +846,18 @@ void forceDisplayRefresh() {
 
 // Update the nextPage function to use the updated forceDisplayRefresh
 void nextPage() {
+    // If we don't have a valid fix and not using fake GPS, prioritize showing GPS page
+    if (fix_status != 0 && !USE_FAKE_GPS) {
+        // If not already on GPS page, go to GPS page directly
+        if (current_page != 4) {
+            current_page = 4; // GPS page
+            printf("No valid GPS fix yet - switching to GPS status page\n");
+            forceDisplayRefresh();
+            return;
+        }
+    }
+    
+    // Normal page cycling behavior
     current_page = (current_page + 1) % PAGE_COUNT;
     printf("Switching to page %d\n", current_page);
 
@@ -842,7 +906,7 @@ void refreshDisplay_Settings_Button(int page) {
 // Add this function to format the data as JSON
 void prepareDataForTransmission(const SensorData& data, char* json_buffer, size_t buffer_size) {
     snprintf(json_buffer, buffer_size,
-             "{\"token\":\"REPLACE_TOKEN\","
+             "{\"token\":\"REPLACE_a6805463-2aff-4344-8dfa-6731b16f9154\","
              "\"measured_at\":\"%u\","  // Use timestamp
              "\"lat\":%.7f,\"long\":%.7f,\"co2\":%u,\"hum\":%.2f,"
              "\"temp\":%.2f,\"part_2_5\":%u,\"part_5\":%u,\"part_10\":%u}",
@@ -880,7 +944,7 @@ void prepareBatchDataForTransmission(const std::vector<SensorData>& data_vec, ch
     
     // Start with the opening part of the JSON
     int written = snprintf(json_buffer, buffer_size,
-                         "{\"token\":\"REPLACE_TOKEN\","
+                         "{\"token\":\"REPLACE_a6805463-2aff-4344-8dfa-6731b16f9154\","
                          "\"measurements\":[");
     
     size_t remaining = buffer_size - written;
@@ -2192,6 +2256,98 @@ void displayInitializationPage(const char* status_message, int step, int total_s
     EPD_1IN54_V2_Display(ImageBuffer);
 }
 
+// Add these new constants after other interval definitions (around line 150)
+#define GPS_CHECK_INTERVAL_MS 500     // Check GPS every 500ms for better fix acquisition
+#define GPS_STATUS_UPDATE_MS 2000     // Update GPS status variables every 2 seconds
+
+// Add these variables after other globals (around line 189)
+uint32_t last_gps_check_ms = 0;       // Last time GPS was checked
+uint32_t last_gps_status_update_ms = 0;  // Last time GPS status was updated
+bool continuously_search_gps = true;  // Always search for GPS in background
+
+// Add this constant at the top with other constants
+#define GPS_POLL_INTERVAL_MS 100  // Poll GPS every 100ms (10Hz) for maximum responsiveness
+
+// Add this global variable to store the latest valid GPS coordinates
+double latest_valid_lat = 0;
+double latest_valid_lon = 0;
+bool has_valid_fix_since_boot = false;
+
+// Add a new function to show GPS acquisition progress
+void displayGPSAcquisitionProgress(int elapsed_seconds, int satellites, int timeout_seconds) {
+    resetImageBuffer();
+    char buffer[80];
+    
+    // Page Title
+    Paint_DrawString_EN(10, 10, "GPS Acquisition", &Font20, BLACK, WHITE);
+    
+    // Draw time elapsed
+    sprintf(buffer, "Time: %d/%d sec", elapsed_seconds, timeout_seconds);
+    Paint_DrawString_EN(10, 35, buffer, &Font12, BLACK, WHITE);
+    
+    // Draw satellite count
+    sprintf(buffer, "Satellites: %d", satellites);
+    Paint_DrawString_EN(10, 55, buffer, &Font16, BLACK, WHITE);
+    
+    // Draw progress bar frame
+    int bar_width = 180;
+    int bar_height = 15;
+    int bar_x = 10;
+    int bar_y = 80;
+    Paint_DrawRectangle(bar_x, bar_y, bar_x + bar_width, bar_y + bar_height, BLACK, DOT_PIXEL_1X1, DRAW_FILL_EMPTY);
+    
+    // Draw progress bar fill - show elapsed time percentage
+    int fill_width = (bar_width * elapsed_seconds) / timeout_seconds;
+    if (fill_width > 0) {
+        Paint_DrawRectangle(bar_x, bar_y, bar_x + fill_width, bar_y + bar_height, BLACK, DOT_PIXEL_1X1, DRAW_FILL_FULL);
+    }
+    
+    // Draw satellite quality indicator
+    Paint_DrawString_EN(10, 105, "Signal Quality:", &Font12, BLACK, WHITE);
+    
+    // Draw satellite bars
+    int sat_x = 10;
+    int sat_y = 120;
+    int sat_width = 12;
+    int sat_height = 20;
+    int sat_spacing = 5;
+    
+    // Draw up to 8 satellite bars based on count
+    for (int i = 0; i < 8; i++) {
+        int x = sat_x + i * (sat_width + sat_spacing);
+        int bar_h = sat_height;
+        
+        // Draw empty bars for all potential satellites
+        Paint_DrawRectangle(x, sat_y, x + sat_width, sat_y + sat_height, 
+                           BLACK, DOT_PIXEL_1X1, DRAW_FILL_EMPTY);
+        
+        // Fill bars for visible satellites
+        if (i < satellites) {
+            // Draw filled bars with variable height for visible satellites
+            bar_h = 5 + (i % 4) * 5;
+            Paint_DrawRectangle(x, sat_y + (sat_height - bar_h), x + sat_width, sat_y + sat_height, 
+                               BLACK, DOT_PIXEL_1X1, DRAW_FILL_FULL);
+        }
+    }
+    
+    // Show status message
+    if (satellites == 0) {
+        Paint_DrawString_EN(10, 150, "Searching for satellites...", &Font12, BLACK, WHITE);
+    } else if (satellites < 3) {
+        Paint_DrawString_EN(10, 150, "Signal weak - keep outdoors", &Font12, BLACK, WHITE);
+    } else if (satellites < 5) {
+        Paint_DrawString_EN(10, 150, "Signal OK - acquiring fix", &Font12, BLACK, WHITE);
+    } else {
+        Paint_DrawString_EN(10, 150, "Good signal - nearly ready", &Font12, BLACK, WHITE);
+    }
+    
+    // Add instructions
+    Paint_DrawString_EN(10, 170, "Press any button to skip", &Font12, BLACK, WHITE);
+    
+    // Full refresh to ensure clarity
+    EPD_1IN54_V2_Display(ImageBuffer);
+}
+
 int main() {
     stdio_init_all();
 
@@ -2264,13 +2420,20 @@ int main() {
     gps.enableFakeGPS(true);
     // You can set custom coordinates if needed
     // gps.setFakeCoordinates(48.20662016908546, 15.617513602109687);
-#endif
-
+#else
+    // Only initialize real GPS if not using fake data
+    
+    // First test the connection to make sure GPS is responsive
+    printf("Testing GPS connection...\n");
+    int gps_test_result = gps.testConnection();
+    printf("GPS connection test result: %d (0=Good, 1=No NMEA, 2=UART error)\n", gps_test_result);
+    
     // Enable time messages explicitly
     printf("Requesting GPS module to enable time messages...\n");
     gps.enableTimeMessages();
-
-    // First try a cold start to reset the module and clear all navigation data
+    
+    // Set up for faster GPS acquisition by sending multiple configuration commands
+    // First try a cold start to fully reset the module
     printf("Performing GPS cold start to reset the module...\n");
     bool cold_start_success = gps.sendColdStartCommand();
     if (cold_start_success) {
@@ -2281,6 +2444,17 @@ int main() {
         printf("Attempting hot start instead...\n");
         gps.sendHotStartCommand();
     }
+    
+    // Additional configuration to focus on faster fix acquisition
+    printf("Sending additional GPS configuration commands...\n");
+    gps.enableTimeMessages();  // Send again after reset for redundancy
+    
+    // Use the new optimization function for faster fix acquisition
+    printf("Optimizing GPS for faster fix acquisition...\n");
+    gps.optimizeForFastAcquisition();
+    
+    printf("Starting continuous GPS acquisition in the background...\n");
+#endif
 
     // Set GPS start time after initialization
     gps_start_time = get_absolute_time();
@@ -2290,6 +2464,103 @@ int main() {
     bool has_fix = false;
     fix_status = 2; // Start with invalid fix
     satellites_visible = 0;
+    last_gps_check_ms = to_ms_since_boot(get_absolute_time());
+    last_gps_status_update_ms = to_ms_since_boot(get_absolute_time());
+    
+    // Wait for a valid GPS fix before entering the main loop
+    if (!USE_FAKE_GPS) {
+        printf("Waiting for initial GPS fix before starting main loop...\n");
+        
+        // Define timeout for initial GPS fix (120 seconds)
+        const int GPS_INIT_TIMEOUT = 120;  // Increased from 60 to 120 seconds
+        bool initial_fix = false;
+        uint32_t start_time = to_ms_since_boot(get_absolute_time());
+        
+        // Show progress updates while waiting
+        for (int wait_time = 0; wait_time < GPS_INIT_TIMEOUT; wait_time += 2) {  // Check every 2 seconds
+            // Update satellite count
+            satellites_visible = gps.getVisibleSatellites();
+            
+            // Display acquisition progress
+            displayGPSAcquisitionProgress(wait_time, satellites_visible, GPS_INIT_TIMEOUT);
+            
+            // Check for GPS fix
+            initial_fix = gps.waitForFix(2);  // 2 second increments
+            
+            // Exit if we got a fix
+            if (initial_fix) {
+                printf("Valid GPS fix obtained! Satellites: %d\n", satellites_visible);
+                fix_status = 0; // Valid fix
+                has_valid_fix_since_boot = true;
+                
+                // Set the fix coordinates
+                std::string gps_line;
+                double gps_lon = 0, gps_lat = 0;
+                char gps_ew = 'E', gps_ns = 'N';
+                std::string gps_time_str, gps_date_str;
+                
+                // Read the latest coordinates
+                if (gps.readLine(gps_line, gps_lon, gps_ew, gps_lat, gps_ns, gps_time_str, gps_date_str) == 0) {
+                    latest_valid_lat = gps_lat;
+                    latest_valid_lon = gps_lon;
+                    printf("First valid coordinates: %.6f, %.6f\n", latest_valid_lat, latest_valid_lon);
+                }
+                
+                // Show success message
+                displayUploadStatus("GPS fix acquired!");
+                sleep_ms(1000);
+                break;
+            }
+            
+            // Check if user wants to skip waiting (if they press any button)
+            // Direct GPIO read to avoid interrupt dependencies
+            if (gpio_get(BUTTON_NEXT_PAGE) == 0 || gpio_get(BUTTON_REFRESH_DISPLAY) == 0) {
+                printf("User interrupted GPS wait, continuing without fix\n");
+                displayUploadStatus("GPS wait skipped");
+                sleep_ms(1000);
+                break;
+            }
+            
+            printf("Waiting for GPS fix... %d seconds elapsed, %d satellites\n", 
+                  wait_time, satellites_visible);
+        }
+        
+        if (!initial_fix) {
+            printf("Timed out waiting for GPS fix, continuing anyway\n");
+            displayUploadStatus("No GPS fix, continuing");
+            sleep_ms(1000);
+        }
+    } else {
+        // Fake GPS mode - simulate acquisition
+        printf("Simulating GPS acquisition in fake mode\n");
+        displayUploadStatus("Simulating GPS");
+        
+        // Wait for a simulated GPS fix
+        for (int i = 0; i < 5; i++) {
+            // Simulate GPS acquisition
+            has_fix = gps.waitForFix(1); // This will do the simulation in fake mode
+            satellites_visible = gps.getVisibleSatellites();
+            
+            // Display progress
+            displayGPSAcquisitionProgress(i+1, satellites_visible, 5);
+            
+            if (has_fix) {
+                printf("Simulated GPS fix obtained\n");
+                fix_status = 0; // Valid fix
+                has_valid_fix_since_boot = true;
+                
+                // Set default fake coordinates
+                latest_valid_lat = 48.20662016908546;
+                latest_valid_lon = 15.617513602109687;
+                
+                displayUploadStatus("Simulated GPS ready");
+                sleep_ms(1000);
+                break;
+            }
+            
+            sleep_ms(500);
+        }
+    }
     
     last_refresh_time = get_absolute_time();
     printf("Main loop starting now\n");
@@ -2445,10 +2716,29 @@ timeout_complete:
             // Button press processing...
         }
         
-        // Process GPS data on each iteration
-        DEBUG_POINT("Reading GPS data");
+        // Process GPS data on each iteration to update status variables
         std::string gps_data;
-        int gps_result = gps.readLine(gps_data);
+        double gps_lon = 0, gps_lat = 0;
+        char gps_ew = 'E', gps_ns = 'N';
+        std::string gps_time_str, gps_date_str;
+        
+        // Read GPS data with timeout protection
+        int gps_status = gps.readLine(gps_data, gps_lon, gps_ew, gps_lat, gps_ns, gps_time_str, gps_date_str);
+        
+        // Update global GPS status variables
+        fix_status = gps_status;  // 0 = valid fix, 2 = invalid
+        
+        // Update satellites visible count periodically
+        static uint32_t last_sat_check = 0;
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        
+        if (now - last_sat_check > 5000) {  // Check every 5 seconds
+            satellites_visible = gps.getVisibleSatellites();
+            last_sat_check = now;
+            printf("GPS Status: Fix=%s, Satellites=%d\n", 
+                  (fix_status == 0) ? "VALID" : "INVALID", 
+                  satellites_visible);
+        }
         
         // Don't wait too long for GPS data before proceeding with other tasks
         // This prevents hanging the main loop on GPS data
@@ -2465,6 +2755,37 @@ timeout_complete:
                 printf("TIMING: Data collection triggered (elapsed: %u ms, interval: %u ms)\n",
                        (unsigned int)(current_time - last_data_collection_ms),
                        (unsigned int)dataCollectionInterval);
+                
+                // Check if we have a valid GPS fix before collecting data
+                if (fix_status != 0 && !USE_FAKE_GPS && !has_valid_fix_since_boot) {
+                    // No valid GPS fix yet and no previous valid fix
+                    printf("Waiting for valid GPS fix before collecting data (satellites: %d)\n", satellites_visible);
+                    
+                    // Update the display to show we're waiting for GPS fix
+                    if (current_page == 4) {  // If currently on GPS page, refresh it
+                        forceDisplayRefresh();
+                    } else {
+                        // Briefly show a waiting message if not on GPS page
+                        displayUploadStatus("Waiting for GPS fix");
+                        sleep_ms(1000);
+                        forceDisplayRefresh(); // Return to current page
+                    }
+                    
+                    // Update the collection time but don't collect data yet
+                    last_data_collection_ms = current_time;
+                    continue; // Skip data collection until we have a fix
+                }
+                
+                // We have a valid fix now or had one before, proceed with data collection
+                // If we have a current valid fix, update the saved coordinates
+                if (fix_status == 0) {
+                    // Store the latest valid coordinates for future use
+                    // These coordinates come from the continuous GPS polling section
+                    has_valid_fix_since_boot = true;
+                }
+                
+                printf("Collecting sensor data with %s GPS coordinates\n", 
+                      (fix_status == 0) ? "current" : "last valid");
                 
                 // Read latest data from sensors and GPS
                 DEBUG_POINT("Reading battery level");
@@ -2859,6 +3180,66 @@ timeout_complete:
 #ifdef USE_WATCHDOG
         watchdog_update();
 #endif
+
+        // Process GPS data more frequently in a dedicated check
+        // This runs independently of other operations to ensure continuous GPS acquisition
+        if (current_time - last_gps_check_ms >= GPS_POLL_INTERVAL_MS) {
+            // Process GPS data with minimal overhead for continuous background acquisition
+            std::string gps_data;
+            double gps_lon = 0, gps_lat = 0;
+            char gps_ew = 'E', gps_ns = 'N';
+            std::string gps_time_str, gps_date_str;
+            
+            // Read GPS data with timeout protection - do this frequently (10Hz polling)
+            int gps_status_result = gps.readLine(gps_data, gps_lon, gps_ew, gps_lat, gps_ns, gps_time_str, gps_date_str);
+            
+            // Update fix status immediately on any change
+            if (fix_status != gps_status_result) {
+                fix_status = gps_status_result;  // 0 = valid fix, 2 = invalid
+                
+                // Log fix status changes
+                printf("GPS Fix Status changed: %s (satellites: %d)\n", 
+                      (fix_status == 0) ? "VALID" : "INVALID", satellites_visible);
+                
+                // If we just got a valid fix, refresh display to show it
+                if (fix_status == 0 && current_page == 4) {
+                    refresh_display = true;
+                }
+            }
+            
+            // Update satellites visible count periodically
+            if (current_time - last_gps_status_update_ms >= GPS_STATUS_UPDATE_MS) {
+                satellites_visible = gps.getVisibleSatellites();
+                
+                // Only log periodic updates if fix status hasn't changed
+                printf("GPS Status Update: Fix=%s, Satellites=%d, Coords: %.6f, %.6f\n", 
+                      (fix_status == 0) ? "VALID" : "INVALID", 
+                      satellites_visible,
+                      gps_lat, gps_lon);
+                
+                last_gps_status_update_ms = current_time;
+            }
+            
+            // Store GPS coordinates for data collection
+            if (fix_status == 0) {
+                // We have a valid fix, update the latest valid coordinates
+                latest_valid_lat = gps_lat;
+                latest_valid_lon = gps_lon;
+                has_valid_fix_since_boot = true;
+                
+                // Set the current position data for sensor data collection
+                sensor_data_obj.longitude = (int32_t)(gps_lon * 10000000); // Store as fixed-point
+                sensor_data_obj.latitude = (int32_t)(gps_lat * 10000000);   // Store as fixed-point
+            } else if (has_valid_fix_since_boot) {
+                // No current fix, but we had one before - use the last known valid position
+                // This ensures we always have valid coordinates when we had a fix at any point
+                sensor_data_obj.longitude = (int32_t)(latest_valid_lon * 10000000);
+                sensor_data_obj.latitude = (int32_t)(latest_valid_lat * 10000000);
+            }
+            
+            // Update last GPS check time
+            last_gps_check_ms = current_time;
+        }
     }
 
     free(ImageBuffer);

@@ -119,6 +119,10 @@ public:
     // Sends a command to the GPS module to specifically enable time messages
     // This can help ensure time data is being sent by the module
     bool enableTimeMessages();
+    
+    // Optimizes GPS module for faster fix acquisition by sending various configuration commands
+    // Returns true if the GPS module is still responding after sending the commands
+    bool optimizeForFastAcquisition();
 };
 
 

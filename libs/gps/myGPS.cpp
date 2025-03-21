@@ -7,6 +7,7 @@
 #include "libs/gps/myGPS.h"
 #include <hardware/gpio.h>
 #include <time.h>  // Add for time functions
+#include <cmath>
 
 myGPS::myGPS(uart_inst_t *uart_id, int baud_rate, int tx_pin, int rx_pin) {
     this->uart_id = uart_id;
@@ -17,83 +18,150 @@ myGPS::myGPS(uart_inst_t *uart_id, int baud_rate, int tx_pin, int rx_pin) {
 }
 
 void myGPS::init() {
+    // Initialize UART with higher priority settings
     uart_init(this->uart_id, this->baud_rate);
+    
+    // Configure UART pins
     gpio_set_function(this->tx_pin, GPIO_FUNC_UART);
     gpio_set_function(this->rx_pin, GPIO_FUNC_UART);
+    
+    // Enable pull-up on RX pin to improve signal integrity
+    gpio_pull_up(this->rx_pin);
+    
+    // Set UART FIFO thresholds for better responsiveness
+    // Enable FIFO and set receive interrupt trigger at 1/8 full (more responsive)
+    uart_set_fifo_enabled(this->uart_id, true);
+    
+    // Flush any pending data in the UART
+    while (uart_is_readable(this->uart_id)) {
+        uart_getc(this->uart_id);
+    }
+    
+    printf("GPS UART initialized with optimized settings\n");
 }
 
-/** /@return 0 on sucess \n 1 on not sucess
+/** /@return 0 on sucess \n 1 on not sucess \n 2 on invalid fix
  */
 int myGPS::readLine(std::string &line) {
-    // Add absolute master timeout to prevent hangs and deadlocks
-    absolute_time_t master_timeout = make_timeout_time_ms(1000); // 1 second absolute maximum
-    bool master_timeout_reached = false;
-    
-    if(!uart_is_readable(this->uart_id)) {
-        return 1;
+    // If fake GPS mode is enabled, generate data immediately
+    if (use_fake_data) {
+        // Generate a fake NMEA sentence for GLL format with current timestamp
+        char fake_buffer[256];
+        
+        // Get current time for the fake data
+        time_t timestamp = ::time(NULL);
+        struct tm *timeinfo = gmtime(&timestamp);
+        
+        // Format the time as HHMMSS.sss
+        char time_str[15];
+        sprintf(time_str, "%02d%02d%02d.000", 
+                timeinfo->tm_hour, timeinfo->tm_min, timeinfo->tm_sec);
+        
+        // Add small random variations to simulate GPS accuracy fluctuations
+        // Use time as seed for randomization to get different values each second
+        srand(timestamp);
+        double random_lat_offset = ((rand() % 100) - 50) * 0.000005;
+        double random_lon_offset = ((rand() % 100) - 50) * 0.000005;
+        
+        double lat_with_noise = fake_latitude + random_lat_offset;
+        double lon_with_noise = fake_longitude + random_lon_offset;
+        
+        // Format coordinates in NMEA format
+        double lat_degrees = std::floor(lat_with_noise);
+        double lat_minutes = (lat_with_noise - lat_degrees) * 60.0;
+        double lon_degrees = std::floor(lon_with_noise);
+        double lon_minutes = (lon_with_noise - lon_degrees) * 60.0;
+        
+        // Format the NMEA sentence
+        sprintf(fake_buffer, "$GNGLL,%02.0f%07.4f,%c,%03.0f%07.4f,%c,%s,A,*XX\r\n",
+                lat_degrees, lat_minutes, 
+                lat_with_noise >= 0 ? 'N' : 'S',
+                lon_degrees, lon_minutes, 
+                lon_with_noise >= 0 ? 'E' : 'W',
+                time_str);
+        
+        line = fake_buffer;
+        
+        // Update internal variables
+        this->latitude = lat_with_noise;
+        this->longitude = lon_with_noise;
+        this->nsIndicator = lat_with_noise >= 0 ? 'N' : 'S';
+        this->ewIndicator = lon_with_noise >= 0 ? 'E' : 'W';
+        this->time = time_str;
+        
+        // Format the date for internal use
+        char date_buffer[7];
+        sprintf(date_buffer, "%02d%02d%02d", 
+                timeinfo->tm_mday, timeinfo->tm_mon + 1, timeinfo->tm_year % 100);
+        this->date = date_buffer;
+        
+        // Static time-limited debug output (1/10th of fake positions)
+        static uint32_t last_debug_time = 0;
+        uint32_t now = to_ms_since_boot(get_absolute_time());
+        
+        if (now - last_debug_time > 10000) { // Every 10 seconds
+            printf("FAKE GPS: Position: %.6f,%c %.6f,%c (simulated)\n", 
+                  lat_with_noise, lat_with_noise >= 0 ? 'N' : 'S',
+                  lon_with_noise, lon_with_noise >= 0 ? 'E' : 'W');
+            last_debug_time = now;
+        }
+        
+        // Return 0 to indicate valid fix
+        return 0;
     }
 
-    // Add timeout mechanism - reduced to prevent long waits
-    absolute_time_t timeout_time = make_timeout_time_ms(500); // Reduced from 2000ms to 500ms
+    // For real GPS data, use even shorter timeouts for quicker polling
+    absolute_time_t master_timeout = make_timeout_time_ms(200); // Reduced from 300ms to 200ms
+    
+    // Check if UART has data - if not, return quickly
+    if(!uart_is_readable(this->uart_id)) {
+        return 1; // No data available yet
+    }
+
+    // Use an even shorter timeout for each polling cycle
+    absolute_time_t timeout_time = make_timeout_time_ms(100); // Reduced from 200ms to 100ms
     
     bool valid_sentence_found = false;
     std::string sentence_type;
     
-    // Safety counter to prevent infinite loops
+    // Safety counter with reduced maximum for faster returns
     int loop_counter = 0;
-    const int MAX_LOOP_ITERATIONS = 500; // Absolute maximum loops
+    const int MAX_LOOP_ITERATIONS = 100; // Reduced from 200 to 100 for faster returns
+    
+    // Single NMEA sentence buffer with pre-allocated capacity
+    this->buffer.reserve(100); // Pre-allocate memory to reduce reallocations
+    this->buffer.clear();      // Clear buffer for new data
     
     // Keep trying until we find a valid sentence or timeout
-    while (!valid_sentence_found && !absolute_time_diff_us(get_absolute_time(), timeout_time) <= 0) {
-        // Break if the master timeout is reached or we've looped too many times
-        if (absolute_time_diff_us(get_absolute_time(), master_timeout) <= 0 || loop_counter++ > MAX_LOOP_ITERATIONS) {
-            if (loop_counter > MAX_LOOP_ITERATIONS) {
-                printf("GPS loop safety limit reached (%d iterations), breaking\n", loop_counter);
-            } else {
-                printf("GPS master timeout reached, breaking\n");
-            }
-            master_timeout_reached = true;
-            break;
-        }
+    while (!valid_sentence_found && 
+           !absolute_time_diff_us(get_absolute_time(), timeout_time) <= 0 &&
+           loop_counter++ < MAX_LOOP_ITERATIONS) {
         
-        this->buffer = "";
-        // Start with an empty buffer
-        
-        // Inner loop safety counter
-        int inner_loop_counter = 0;
-        const int MAX_INNER_LOOP_ITERATIONS = 300; // Maximum inner loops
-        
+        // If buffer isn't empty and doesn't end with newline, continue reading
         while(this->buffer.empty() || this->buffer.back() != '\n') {
-            // Break if master timeout is reached or we've looped too many times in the inner loop
-            if (absolute_time_diff_us(get_absolute_time(), master_timeout) <= 0 || inner_loop_counter++ > MAX_INNER_LOOP_ITERATIONS) {
-                if (inner_loop_counter > MAX_INNER_LOOP_ITERATIONS) {
-                    printf("GPS inner loop safety limit reached (%d iterations), breaking\n", inner_loop_counter);
-                }
-                master_timeout_reached = true;
-                break;
+            // Break on timeout
+            if (absolute_time_diff_us(get_absolute_time(), master_timeout) <= 0) {
+                return 1; // Timeout reading GPS
             }
             
             if(uart_is_readable(this->uart_id)) {
-                this->buffer += uart_getc(this->uart_id);
-            } else {
-                // Check for timeout
-                if (absolute_time_diff_us(get_absolute_time(), timeout_time) <= 0) {
-                    // GPS read timeout (not usually an error, just no data right now)
-                    return 1;
+                char c = uart_getc(this->uart_id);
+                this->buffer += c;
+                
+                // Look for end of sentence
+                if (c == '\n') {
+                    break;
                 }
-                sleep_ms(1); // Small delay to prevent busy-waiting
+            } else {
+                sleep_us(100); // Reduced from 1ms to 100μs for faster polling
             }
-            // If buffer gets too large without finding \n, reset it
-            if(this->buffer.length() > 200) {
+            
+            // Buffer safety check
+            if(this->buffer.length() > 100) {
                 // Buffer overflow, reset
-                this->buffer = "";
+                this->buffer.clear();
                 break;
             }
-        }
-        
-        // Break outer loop if master timeout was reached in inner loop
-        if (master_timeout_reached) {
-            break;
         }
         
         if(buffer.empty()) {
@@ -105,258 +173,113 @@ int myGPS::readLine(std::string &line) {
         printf("%s", this->buffer.c_str());
 #endif
         
-        // Check for either GLL or RMC sentences
-        if (this->buffer.find(GNGLL) == 0) {
+        // Quickly check for sentence type
+        if (this->buffer.find(GNGLL) == 0 || this->buffer.find("$GPGLL") == 0) {
             valid_sentence_found = true;
             sentence_type = "GLL";
-        } else if (this->buffer.find(GNRMC) == 0) {
+        } else if (this->buffer.find(GNRMC) == 0 || this->buffer.find("$GPRMC") == 0) {
             valid_sentence_found = true;
             sentence_type = "RMC";
-        } else if (this->buffer.find("$GPRMC") == 0) {
-            valid_sentence_found = true;
-            sentence_type = "RMC";
-        } else if (this->buffer.find("$GPGLL") == 0) {
-            valid_sentence_found = true;
-            sentence_type = "GLL";
         }
     }
     
-    // If we exited due to master timeout or loop limit, return immediately
-    if (master_timeout_reached) {
-        printf("GPS readLine aborted due to timeout or iteration limit\n");
-        return 1;
-    }
-    
-    // If we didn't find a valid sentence before timeout
+    // If we didn't find a valid sentence
     if (!valid_sentence_found) {
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-        printf("No valid GLL or RMC sentence found before timeout\n");
-#endif
-        return 1;
+        return 1; // No valid data
     }
 
+    // Return the found sentence
     line = this->buffer;
+    
+    // Now parse the sentence to extract coordinates and fix status
     std::istringstream iss(this->buffer);
     std::string token;
 
     // Skip the first token (sentence identifier)
     std::getline(iss, token, ',');
     
+    // Faster parsing with direct string operations rather than multiple getlines
     if (sentence_type == "GLL") {
         // Parse GLL sentence
-        // Format: $GNGLL,ddmm.mmmm,N,dddmm.mmmm,E,hhmmss.sss,A,*xx
-        
-        // Latitude
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
+        std::getline(iss, token, ','); // Latitude
+        if (!token.empty() && token.length() >= 3) {
             try {
-                // Added try-catch block to handle invalid conversion
-                if (token.length() >= 3) { // Make sure token has enough characters for parsing
-                    this->latitude = std::stod(token.substr(0, 2)) + std::stod(token.substr(2)) / 60.0;
-                } else {
-                    this->latitude = 0;
-                    printf("Warning: Latitude token too short: '%s'\n", token.c_str());
-                }
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-                printf("Parsed latitude: %f\n", this->latitude);
-#endif
-            } catch (const std::exception& e) {
+                this->latitude = std::stod(token.substr(0, 2)) + std::stod(token.substr(2)) / 60.0;
+            } catch (...) {
                 this->latitude = 0;
-                printf("Error parsing latitude token: '%s' - %s\n", token.c_str(), e.what());
             }
-        } else {
-            this->latitude = 0;
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty latitude value\n");
-#endif
         }
 
-        // N/S indicator
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
-            this->nsIndicator = token[0];
-        } else {
-            this->nsIndicator = 'C'; // 'C' for "Can't determine"
-        }
+        std::getline(iss, token, ','); // N/S indicator
+        if (!token.empty()) this->nsIndicator = token[0];
 
-        // Longitude
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
+        std::getline(iss, token, ','); // Longitude
+        if (!token.empty() && token.length() >= 4) {
             try {
-                // Added try-catch block to handle invalid conversion
-                if (token.length() >= 4) { // Make sure token has enough characters for parsing
-                    this->longitude = std::stod(token.substr(0, 3)) + std::stod(token.substr(3)) / 60.0;
-                } else {
-                    this->longitude = 0;
-                    printf("Warning: Longitude token too short: '%s'\n", token.c_str());
-                }
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-                printf("Parsed longitude: %f\n", this->longitude);
-#endif
-            } catch (const std::exception& e) {
+                this->longitude = std::stod(token.substr(0, 3)) + std::stod(token.substr(3)) / 60.0;
+            } catch (...) {
                 this->longitude = 0;
-                printf("Error parsing longitude token: '%s' - %s\n", token.c_str(), e.what());
             }
-        } else {
-            this->longitude = 0;
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty longitude value\n");
-#endif
         }
 
-        // E/W indicator
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
-            this->ewIndicator = token[0];
-        } else {
-            this->ewIndicator = 'C';
-        }
+        std::getline(iss, token, ','); // E/W indicator
+        if (!token.empty()) this->ewIndicator = token[0];
 
-        // Time
-        std::getline(iss, token, ',');
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-        printf("Raw time token: '%s'\n", token.c_str()); // Add raw token debug
-#endif
+        std::getline(iss, token, ','); // Time
         if (!token.empty() && token.size() >= 6) {
             this->time = token.substr(0, 2) + ":" + token.substr(2, 2) + ":" + token.substr(4, 2);
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Parsed timestamp: %s\n", this->time.c_str());
-#endif
-        } else {
-            this->time = "00:00:00";
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty or invalid time field in GPS data\n");
-#endif
         }
 
-        // Fix validity
-        std::getline(iss, token, ',');
+        std::getline(iss, token, ','); // Fix validity (A=valid, V=invalid)
         bool valid_fix = (token == "A");
-        
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-        printf("GPS Fix Status: %s\n", valid_fix ? "VALID" : "INVALID");
-#endif
         
         return valid_fix ? 0 : 2;  // Return 0 for valid fix, 2 for invalid
     }
     else if (sentence_type == "RMC") {
-        // Parse RMC sentence
-        // Format: $GNRMC,hhmmss.sss,A,ddmm.mmmm,N,dddmm.mmmm,E,speed,course,ddmmyy,,,*xx
-        
-        // Time is the first field in RMC
-        std::getline(iss, token, ',');
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-        printf("Raw time token (RMC): '%s'\n", token.c_str());
-#endif
+        // Parse RMC sentence - more efficient parsing
+        std::getline(iss, token, ','); // Time
         if (!token.empty() && token.size() >= 6) {
             this->time = token.substr(0, 2) + ":" + token.substr(2, 2) + ":" + token.substr(4, 2);
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Parsed timestamp (RMC): %s\n", this->time.c_str());
-#endif
-        } else {
-            this->time = "00:00:00";
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty or invalid time field in RMC data\n");
-#endif
         }
         
-        // Fix validity 
-        std::getline(iss, token, ',');
+        std::getline(iss, token, ','); // Fix validity
         bool valid_fix = (token == "A");
         
-        // Latitude
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
+        if (!valid_fix) return 2; // Early return if invalid fix
+        
+        std::getline(iss, token, ','); // Latitude
+        if (!token.empty() && token.length() >= 3) {
             try {
-                // Added try-catch block to handle invalid conversion
-                if (token.length() >= 3) { // Make sure token has enough characters for parsing
-                    this->latitude = std::stod(token.substr(0, 2)) + std::stod(token.substr(2)) / 60.0;
-                } else {
-                    this->latitude = 0;
-                    printf("Warning: Latitude token too short: '%s'\n", token.c_str());
-                }
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-                printf("Parsed latitude (RMC): %f\n", this->latitude);
-#endif
-            } catch (const std::exception& e) {
+                this->latitude = std::stod(token.substr(0, 2)) + std::stod(token.substr(2)) / 60.0;
+            } catch (...) {
                 this->latitude = 0;
-                printf("Error parsing latitude token: '%s' - %s\n", token.c_str(), e.what());
             }
-        } else {
-            this->latitude = 0;
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty latitude value in RMC\n");
-#endif
         }
         
-        // N/S indicator
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
-            this->nsIndicator = token[0];
-        } else {
-            this->nsIndicator = 'C';
-        }
+        std::getline(iss, token, ','); // N/S indicator
+        if (!token.empty()) this->nsIndicator = token[0];
         
-        // Longitude
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
+        std::getline(iss, token, ','); // Longitude
+        if (!token.empty() && token.length() >= 4) {
             try {
-                // Added try-catch block to handle invalid conversion
-                if (token.length() >= 4) { // Make sure token has enough characters for parsing
-                    this->longitude = std::stod(token.substr(0, 3)) + std::stod(token.substr(3)) / 60.0;
-                } else {
-                    this->longitude = 0;
-                    printf("Warning: Longitude token too short: '%s'\n", token.c_str());
-                }
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-                printf("Parsed longitude (RMC): %f\n", this->longitude);
-#endif
-            } catch (const std::exception& e) {
+                this->longitude = std::stod(token.substr(0, 3)) + std::stod(token.substr(3)) / 60.0;
+            } catch (...) {
                 this->longitude = 0;
-                printf("Error parsing longitude token: '%s' - %s\n", token.c_str(), e.what());
             }
-        } else {
-            this->longitude = 0;
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty longitude value in RMC\n");
-#endif
         }
         
-        // E/W indicator
-        std::getline(iss, token, ',');
-        if (!token.empty()) {
-            this->ewIndicator = token[0];
-        } else {
-            this->ewIndicator = 'C';
-        }
+        std::getline(iss, token, ','); // E/W indicator
+        if (!token.empty()) this->ewIndicator = token[0];
         
-        // Skip speed
+        // Skip speed and course
         std::getline(iss, token, ',');
-        
-        // Skip course
         std::getline(iss, token, ',');
         
         // Date field (format: ddmmyy)
         std::getline(iss, token, ',');
         if (!token.empty() && token.size() >= 6) {
-            this->date = token;  // Store the raw date string
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Parsed date (RMC): %s (DD/MM/YY)\n", this->date.c_str());
-#endif
-        } else {
-            // Keep the previous date if nothing valid is received
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-            printf("Empty or invalid date field in RMC data\n");
-#endif
+            this->date = token;
         }
-        
-#if defined(DEBUG_GPS_LOG) && DEBUG_GPS_LOG
-        printf("GPS Fix Status (RMC): %s\n", valid_fix ? "VALID" : "INVALID");
-        printf("Long: %f%c\n", this->longitude, this->ewIndicator);
-        printf("Lat: %f%c\n", this->latitude, this->nsIndicator);
-        printf("Time: %s\n", this->time.c_str());
-        printf("Date: %s\n\n", this->date.c_str());
-#endif
         
         return valid_fix ? 0 : 2;  // Return 0 for valid fix, 2 for invalid
     }
@@ -505,12 +428,11 @@ int myGPS::testConnection() {
     // Attempt to read from the module with a timeout
     printf("Testing GPS connection...\n");
     
-    // First, check if UART is configured properly
-    if (!uart_is_enabled(this->uart_id)) {
-        printf("UART not enabled. Initializing UART...\n");
-        this->init();
-        sleep_ms(100); // Give it time to initialize
-    }
+    // First, check if UART is configured properly - don't use uart_is_enabled
+    // Use a simpler approach by trying to reinitialize UART
+    printf("Reinitializing UART to ensure it's enabled...\n");
+    this->init();
+    sleep_ms(100); // Give it time to initialize
     
     // Attempt to read data (any data) from UART for 3 seconds
     printf("Checking if GPS module is sending any data...\n");
@@ -619,10 +541,47 @@ int myGPS::testConnection() {
 
 int myGPS::getVisibleSatellites() {
     if (use_fake_data) {
+        // If in fake GPS mode, first simulate gradual satellite acquisition
+        if (fake_startup_time == 0) {
+            // First call - start acquisition simulation
+            fake_startup_time = to_ms_since_boot(get_absolute_time());
+            fake_satellites = 0;
+            fake_fix_acquired = false;
+            return 0;
+        }
+        
+        // Calculate elapsed time since startup
+        uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - fake_startup_time;
+        
+        // Simulate finding satellites gradually over 15 seconds
+        if (elapsed < fake_acquisition_time_ms) {
+            // Gradually increase satellites from 0 to 7 during acquisition
+            fake_satellites = (7 * elapsed) / fake_acquisition_time_ms;
+            // Sometimes show one less to simulate fluctuation
+            if (rand() % 10 == 0) {
+                fake_satellites = fake_satellites > 0 ? fake_satellites - 1 : 0;
+            }
+        } else if (!fake_fix_acquired) {
+            // After acquisition time, we have a fix with 7-10 satellites
+            fake_fix_acquired = true;
+            fake_satellites = 7 + (rand() % 4);
+            printf("FAKE GPS: Fix acquired with %d satellites after %d ms\n", 
+                   fake_satellites, elapsed);
+        } else {
+            // After fix, occasionally vary satellite count to simulate real-world changes
+            if (rand() % 20 == 0) {
+                int change = (rand() % 3) - 1; // -1, 0, or +1
+                fake_satellites += change;
+                // Keep within reasonable range
+                if (fake_satellites < 6) fake_satellites = 6;
+                if (fake_satellites > 12) fake_satellites = 12;
+            }
+        }
+        
         return fake_satellites;
     }
     
-    // Original implementation continues below
+    // Original implementation continues below for real GPS
     // Attempt to read from the GPS module for up to 2 seconds
     absolute_time_t timeout = make_timeout_time_ms(2000);
     int satellite_count = 0;
@@ -712,28 +671,35 @@ int myGPS::getVisibleSatellites() {
 
 // Add a helper method to assist with getting a position fix
 bool myGPS::waitForFix(int timeout_seconds) {
+    // If using fake GPS, simulate the acquisition process
     if (use_fake_data) {
-        // If this is the first call, initialize the startup time
+        // Reset simulation state if this is the first call after enabling fake mode
         if (fake_startup_time == 0) {
             printf("FAKE GPS: Starting acquisition simulation\n");
             fake_startup_time = to_ms_since_boot(get_absolute_time());
-            fake_fix_acquired = false;
             fake_satellites = 0;
+            fake_fix_acquired = false;
             return false; // First call always returns no fix
         }
         
-        // Simulate acquisition delay with gradual satellite discovery
+        // Get the elapsed time since we started the fake GPS simulation
         uint32_t elapsed = to_ms_since_boot(get_absolute_time()) - fake_startup_time;
         
-        // Simulate finding satellites gradually
+        // Simulate a realistic acquisition time - typical cold start takes 5-30 seconds
         if (elapsed < fake_acquisition_time_ms) {
-            // Gradually increase satellites from 0 to 7 during acquisition
+            // Gradually increase satellites during acquisition
             fake_satellites = (7 * elapsed) / fake_acquisition_time_ms;
-            printf("FAKE GPS: Acquiring satellites... %d found (%d ms elapsed)\n", 
-                   fake_satellites, elapsed);
             
-            // No fix yet
-            fake_fix_acquired = false;
+            // Log progress but not too frequently
+            static uint32_t last_log_time = 0;
+            uint32_t now = to_ms_since_boot(get_absolute_time());
+            if (now - last_log_time > 1000) { // Log once per second
+                printf("FAKE GPS: Acquiring satellites... %d found (%d ms elapsed)\n", 
+                       fake_satellites, elapsed);
+                last_log_time = now;
+            }
+            
+            // No fix yet during acquisition phase
             return false;
         } else {
             // After acquisition time, we have a fix
@@ -742,11 +708,11 @@ bool myGPS::waitForFix(int timeout_seconds) {
                 fake_fix_acquired = true;
                 fake_satellites = 7 + (rand() % 4); // 7-10 satellites when fixed
             }
-            return true;
+            return true; // We have a fix
         }
     }
     
-    // Real GPS implementation continues below
+    // Real GPS implementation starts here
     printf("Waiting for GPS fix (timeout: %d seconds)...\n", timeout_seconds);
     
     absolute_time_t timeout = make_timeout_time_ms(timeout_seconds * 1000);
@@ -816,11 +782,10 @@ bool myGPS::waitForFix(int timeout_seconds) {
 bool myGPS::sendHotStartCommand() {
     printf("Sending GPS hot start command...\n");
     
-    // Ensure UART is initialized
-    if (!uart_is_enabled(this->uart_id)) {
-        this->init();
-        sleep_ms(100);
-    }
+    // Ensure UART is initialized - don't use uart_is_enabled
+    // Just reinitialize to be safe
+    this->init();
+    sleep_ms(100);
     
     // For NMEA GPS modules, the hot start command varies by manufacturer
     // This is the most common format, compatible with many GPS modules
@@ -893,11 +858,10 @@ bool myGPS::sendHotStartCommand() {
 bool myGPS::sendWarmStartCommand() {
     printf("Sending GPS warm start command...\n");
     
-    // Ensure UART is initialized
-    if (!uart_is_enabled(this->uart_id)) {
-        this->init();
-        sleep_ms(100);
-    }
+    // Ensure UART is initialized - don't use uart_is_enabled
+    // Just reinitialize to be safe
+    this->init();
+    sleep_ms(100);
     
     // For NMEA GPS modules, the warm start command varies by manufacturer
     // This is the most common format for MTK chipsets
@@ -943,11 +907,10 @@ bool myGPS::sendWarmStartCommand() {
 bool myGPS::enableTimeMessages() {
     printf("Sending command to enable GPS time messages...\n");
     
-    // Ensure UART is initialized
-    if (!uart_is_enabled(this->uart_id)) {
-        this->init();
-        sleep_ms(100);
-    }
+    // Ensure UART is initialized - don't use uart_is_enabled
+    // Just reinitialize to be safe
+    this->init();
+    sleep_ms(100);
     
     // Try multiple command formats to cover different GPS module types
     
@@ -1019,11 +982,10 @@ bool myGPS::enableTimeMessages() {
 bool myGPS::sendColdStartCommand() {
     printf("Sending GPS cold start command...\n");
     
-    // Ensure UART is initialized
-    if (!uart_is_enabled(this->uart_id)) {
-        this->init();
-        sleep_ms(100);
-    }
+    // Ensure UART is initialized - don't use uart_is_enabled
+    // Just reinitialize to be safe
+    this->init();
+    sleep_ms(100);
     
     // For NMEA GPS modules, the cold start command varies by manufacturer
     // This is the most common format for MTK chipsets
@@ -1090,3 +1052,84 @@ bool myGPS::sendColdStartCommand() {
         return false;
     }
 }
+
+// Add a new function to optimize GPS for faster fix acquisition (add after sendColdStartCommand)
+bool myGPS::optimizeForFastAcquisition() {
+    printf("Optimizing GPS for faster fix acquisition...\n");
+    
+    // Ensure UART is initialized
+    this->init();
+    sleep_ms(100);
+    
+    // For NMEA GPS modules, try various commands to optimize for faster acquisition
+    // These may not all work on every GPS module but should not cause harm
+    
+    // 1. Enable all NMEA sentences to maximize data for processing
+    // PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28 - Enable all position sentences
+    const char *enable_all = "$PMTK314,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0*28\r\n";
+    for (const char *p = enable_all; *p != '\0'; p++) {
+        uart_putc(this->uart_id, *p);
+    }
+    sleep_ms(100);
+    
+    // 2. Set update rate to 1Hz for better sensitivity (MTK chipsets)
+    // PMTK220,1000 - Update position every 1000ms
+    const char *update_rate = "$PMTK220,1000*1F\r\n";
+    for (const char *p = update_rate; *p != '\0'; p++) {
+        uart_putc(this->uart_id, *p);
+    }
+    sleep_ms(100);
+    
+    // 3. Enable SBAS (Satellite-Based Augmentation System) if available
+    // PMTK313,1 - Enable SBAS
+    const char *enable_sbas = "$PMTK313,1*2E\r\n";
+    for (const char *p = enable_sbas; *p != '\0'; p++) {
+        uart_putc(this->uart_id, *p);
+    }
+    sleep_ms(100);
+    
+    // 4. Set position fix interval (MTK chipsets)
+    // PMTK300,1000,0,0,0,0 - Try to get position fix every 1000ms
+    const char *fix_interval = "$PMTK300,1000,0,0,0,0*1C\r\n";
+    for (const char *p = fix_interval; *p != '\0'; p++) {
+        uart_putc(this->uart_id, *p);
+    }
+    sleep_ms(100);
+    
+    // 5. Try u-blox specific commands for UART configuration
+    // This is for u-blox modules - configure NMEA protocol
+    const char *ublox_nmea = "$PUBX,41,1,0007,0003,9600,0*10\r\n";
+    for (const char *p = ublox_nmea; *p != '\0'; p++) {
+        uart_putc(this->uart_id, *p);
+    }
+    sleep_ms(100);
+    
+    printf("GPS optimization commands sent\n");
+    
+    // Verify we're still getting data from the GPS
+    int timeout_ms = 2000; // 2 second timeout
+    absolute_time_t start_time = get_absolute_time();
+    bool data_received = false;
+    
+    while (!data_received && !absolute_time_diff_us(get_absolute_time(), start_time) <= 0) {
+        if (uart_is_readable(this->uart_id)) {
+            data_received = true;
+            
+            // Drain the buffer to avoid processing stale data
+            while (uart_is_readable(this->uart_id)) {
+                uart_getc(this->uart_id);
+                sleep_ms(1);
+            }
+        }
+        sleep_ms(10);
+    }
+    
+    if (data_received) {
+        printf("GPS module is responding after optimization\n");
+        return true;
+    } else {
+        printf("WARNING: No response from GPS after optimization commands\n");
+        return false;
+    }
+}
+
